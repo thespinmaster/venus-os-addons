@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Layouts
 import Victron.VenusOS
 import QtQuick.Controls.impl as CP
-//import "qrc:/OpkgManager/components/OpkgSingleton.js" as OpkgSingleton
 
 Rectangle {
 	id: root
@@ -33,7 +32,7 @@ Rectangle {
 					text: qsTrId("inetbox_click_to_install_device")
 					Layout.alignment: Qt.AlignHCenter
 					onClicked:  {
-						Global.pageManager.pushPage("qrc:/OpkgManager/OpkgPageSettingsDevicesList.qml")
+						Global.pageManager.pushPage("qrc:/Vespera/PageSettingsDevicesList.qml")
 					}
 				}
 			}

@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+#Used by the Vespera CLI for higher level scanning, binding and removal of usb devices
+
+declare __this_path; __this_path="$(dirname "${BASH_SOURCE[0]}")"
+declare VESPERA_DIR; VESPERA_DIR="$(cd "${__this_path}/.." && pwd)"
+
+# shellcheck source=/data/dev/addons/vespera/src/data/apps/available/vespera/libs/source-lib
+source "${VESPERA_ROOT:-}${VESPERA_DIR}/libs/source-lib"
+
+#addsource "libs/lang-lib"
+addsource "libs/dbus-lib"
+addsource "libs/service-lib"
+addsource "libs/serial-device-installer-lib"
+
+declare DEFAULT_USB_PROPS="ID_MODEL,ID_VENDOR,ID_SERIAL,ID_PATH"
+
+device_remove_all() {
+	local dbus_name="${1}"
+
+	for sid in $("$VESPERA_DIR/scripts/list-device-bindings" "$dbus_name"); do
+		device_remove "$sid";
+	done
+}
+
+device_remove() {
+
+	DEVICE_SID="${1}"
+	[[ -z "$DEVICE_SID" ]] && { echo "Invalid argument: sid empty" >&2; return 1; }
+
+	sdi_remove_service
+
+	# [[ -n "${DEVICE_TTY:-}" && -n "${service_name}" ]] &&
+	# 	service_lib_remove_service "${service_name}.${DEVICE_TTY}"
+
+	dbus_lib_delete_tree "/Settings/Devices/sid_${DEVICE_SID}" 1>/dev/null
+
+	return 0
+}
+
+device_start_all_device_services() {
+	local dbus_name="${1}"
+	local this_path;this_path="$(dirname "${BASH_SOURCE[0]}")"
+
+	for sid in "$this_path/list-device-bindings" "$dbus_name"; do
+		DEVICE_SID="${sid}"
+		local service_name=
+
+		sdi_TTY_from_SID &&
+			sdi_service_name_from_tty "${DEVICE_TTY}" service_name &&
+				service_lib_start_templated_service "${DEVICE_TTY}" "${service_name}" &&
+					rm -f "/dev/serial-starter/${DEVICE_TTY}"
+	done
+}
+
+device_scan_usb() {
+	local tty
+	local usbProps=
+
+	for tty in $(sdi_get_available_devices); do
+
+		sdi_fill_usb_props "$tty" "$DEFAULT_USB_PROPS" usbProps || continue;
+
+		sdi_set_device_sid "$usbProps"
+		usbProps=$(printf '%s\n' "$usbProps" | sed 's/,\?ID_PATH=[^,]*//')
+
+		# The vespera service is responsible for adding the dbus settings
+		# so just pass the values we have
+		printf 'Device Discovered:\t%s\t%s\t%s\n' "$DEVICE_SID" "$tty" "$usbProps"
+	done
+
+	return 0
+}
+
+device_bind() {
+	local sid_or_tty="${1:-}"
+	local service_name="${2:-}"
+	local tty_or_sid="${sid_or_tty#/dev/}"
+	local sid= tty= usbProps=
+
+	[[ -n "${sid_or_tty}" && -n "${service_name}" ]] \
+		|| { echo "Invalid arguments: bind expects <sid|tty> <service-name>" >&2; return 1; }
+
+	if [[ -e "/dev/${tty_or_sid}" ]]; then
+		tty="${tty_or_sid}"
+		DEVICE_TTY=$tty
+	else
+		sid="${tty_or_sid}"
+		DEVICE_SID="${sid}"
+		sdi_TTY_from_SID || { echo "Error: sid (${sid}) does not map to an available tty" >&2; return 1; }
+		tty="${DEVICE_TTY}"
+	fi
+
+	[[ $(sdi_get_available_devices "/dev/${tty}") != "${tty}" ]] \
+		&& { echo "Error: tty ($tty) is not available" >&2; return 1; }
+
+	sdi_fill_usb_props "${tty}" "${DEFAULT_USB_PROPS}" usbProps
+	sdi_set_device_sid "${usbProps}" # hashed usbProps
+	[[ -n "${sid}" ]] || sid="${DEVICE_SID}"
+
+	# fill serial-starter-installer variables
+	# shellcheck disable=SC2034
+	DEVICE_UDEV_PROPS="${usbProps}";
+	# shellcheck disable=SC2034
+	DEVICE_TTY="${tty}"
+	# shellcheck disable=SC2034
+	DEVICE_SERVICE_NAME="${service_name}"
+
+	sdi_install 1>/dev/null || return 1
+
+	dbus_lib_set_string_value "/Settings/Devices/sid_${sid}/UsbProps" "${usbProps}" 1>/dev/null
+
+	find /var/volatile/services -type d -name "*.${DEVICE_TTY}" \
+			! -name "${service_name}.${DEVICE_TTY}" -exec rm -rf {} +
+
+	# Remove stale service symlinks
+	find -L /service -maxdepth 1 -type l -delete
+
+	# The vespera service is responsible for adding the dbus settings
+	# so just pass that we have claimed the device.
+	printf 'Device Claimed:\t%s\n' "${DEVICE_SID}"
+
+	# In demo mode the serial starter-service is down
+	# so manualy create and start the service in this case
+	local demo_mode=
+	dbus_lib_get_value "/Settings/Gui/DemoMode" demo_mode
+
+	[[ -n $demo_mode ]] && {
+		#echo "vespera: Venus OS in demo mode, manualy starting service"
+		(
+				local this_path; this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+				# shellcheck disable=SC1091
+				. "$this_path/serial-device-installer-lib"
+				service_lib_start_templated_service "${tty}" "${service_name}"
+				rm -f "/dev/serial-starter/${tty}"
+		)
+
+	}
+
+}
+
+case "${1:-}" in
+	scan)
+		shift
+		device_scan_usb;;
+	bind)
+		shift
+		device_bind "$@";;
+	unbind|remove)
+		shift
+		device_remove "${1:-}";;
+	unbind-all|remove-all)
+		shift
+		device_remove_all "${1}";;
+	start-all-device-services)
+		device_start_all_device_services "${1}";;
+	*)
+		if [[ -n ${1:-} ]]; then
+			echo "device: invalid command : ${1}" >&2
+		fi
+		;;
+esac

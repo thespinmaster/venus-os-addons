@@ -12,16 +12,16 @@ svc -d "/service/${service_name}"
 sleep 1
 rm -R "/service/${service_name}"
 
-# Remove conf file
-rm -r "/data/${service_name}"
+## Remove conf file
+# rm -r "/data/conf/${package_name}.conf"
 
 # Clear logs
 if [ -f "/var/log/${service_name}" ]; then
   rm -R "/var/log/${service_name}"
 fi
- 
-# shellcheck source=../../../../addons/opkg-manager/src/data/opkg-manager/opkg-common
-. "${VENUS_ROOT_DIR:-}/data/opkg-manager/opkg-common"
-opkg_common_unregister_package "${package_name}"
+
+# shellcheck source=../../../../addons/vespera/src/data/apps/vespera/libs/opkg-lib
+. "/data/apps/vespera/libs/opkg-lib"
+opkg_lib_unregister_package "${package_name}"
 
 echo "${package_name}" removed

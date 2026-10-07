@@ -1,0 +1,43 @@
+import QtQuick 2
+import com.victron.velib 1.0
+
+MbPage {
+	id: root
+
+	required property VesperaManager vesperaManager
+
+	VesperaDbusChildModel {
+		id: devicesModel
+		uid: "dbus/com.victronenergy.vespera/Discovered"
+		filterRegExp: "\/sid_[^/]+$"
+		childId: "Port"
+	}
+
+	model: VesperaSafeDelegateModel {
+
+		model: devicesModel
+
+		delegate: MbSubMenu {
+			id: discoveredDevice
+			required property var model
+			description: model.value
+
+			property bool deviceAdded: false
+
+			function onDeviceAddedCallback(added) {
+				if (added !== undefined)
+					deviceAdded = added
+				return deviceAdded
+			}
+
+			subpage: Component {
+					VesperaPageDiscoveredDevice {
+						vesperaManager: root.vesperaManager
+						serviceUid: discoveredDevice.model.buddy.uid
+						port: discoveredDevice.model.value
+						deviceAddedCallback: discoveredDevice.onDeviceAddedCallback}
+				}
+			}
+
+	}
+}

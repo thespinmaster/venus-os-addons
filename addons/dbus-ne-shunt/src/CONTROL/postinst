@@ -1,3 +1,3 @@
 #!/bin/sh
- 
-"${VE_ROOT_DIR:-}/data/dbus-ne-shunt/installer" "$1" "$0"
+
+"${VE_ROOT_DIR:-}/data/apps/dbus-ne-shunt/installer" "$1" "$0"

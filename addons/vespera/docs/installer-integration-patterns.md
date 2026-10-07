@@ -1,8 +1,8 @@
 # Installer Integration Patterns (Developer Note)
 
-This note explains why opkg-manager avoids using `patch` against shared system/UI files during package install and remove.
+This note explains why vespera avoids using `patch` against shared system/UI files during package install and remove.
 
-For the small number of UI touchpoints that still need file-level integration, opkg-manager uses a custom script: `src/data/opkg-manager/file-patcher`.
+For the small number of UI touchpoints that still need file-level integration, vespera uses a custom script: `src/data/apps/vespera/file-patcher`.
 
 ## Why this matters
 
@@ -18,7 +18,7 @@ Installers run on many firmware versions and combinations of add-ons. Shared-fil
 | Observability | Failures often appear as partial hunks or silent offsets. | Behavior is explicit in package-managed files and helper logic. |
 | Upgrade safety | Reapplying old patches after firmware upgrade is risky. | Reconciliation logic can rebuild state from package metadata/settings. |
 
-## Preferred patterns in opkg-manager
+## Preferred patterns in vespera
 
 - Use package-owned files, generated fragments, or registries instead of editing shared base files directly.
 - When a shared QML file must be touched, limit changes to very small hook blocks near the end of the file.

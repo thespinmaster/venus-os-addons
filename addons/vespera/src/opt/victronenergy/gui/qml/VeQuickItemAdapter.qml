@@ -6,7 +6,7 @@ VeQuickItem {
 		return "dbus/" + string
 	}
 
-	readonly property string opkgManagerServiceUid: "dbus/com.victronenergy.opkgmanager"
+	readonly property string vesperaServiceUid: "dbus/com.victronenergy.vespera"
 	readonly property string systemSettingsServiceUid: "dbus/com.victronenergy.settings"
 
 }

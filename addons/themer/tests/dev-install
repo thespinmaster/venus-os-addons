@@ -32,6 +32,6 @@ done
 rm -rf "$QML_TARGET_PATH/Theming"
 ln -sf "$QML_SOURCE_PATH/Theming" "$QML_TARGET_PATH/Theming"
 
-#$this_path/../src/data/themer/installer "dev-install"
+#$this_path/../src/data/apps/themer/installer "dev-install"
 
 echo "done"

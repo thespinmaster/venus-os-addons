@@ -1,0 +1,78 @@
+#!/bin/bash
+
+declare __vespera_path; __vespera_path="$(dirname "${BASH_SOURCE[0]}")"
+__vespera_path="$(cd "${__vespera_path}/.." && pwd)"
+# shellcheck source="../conf-default/vespera.conf"
+source "${__vespera_path}/conf/vespera.conf"
+VESPERA_DATA_DIR="${VESPERA_ROOT:-}${VESPERA_DATA_DIR}"
+VESPERA_FEEDS_CONF_FILE="${VESPERA_ROOT:-}${VESPERA_FEEDS_CONF_FILE}"
+VESPERA_FEEDS_SYMLINK="${VESPERA_DATA_DIR}/feeds.conf"
+VESPERA_COMBINED_CONF_FILE="${VESPERA_ROOT:-}${VESPERA_COMBINED_CONF_FILE}"
+VESPERA_INDEXER_STATE_FILE="${VESPERA_ROOT:-}${VESPERA_INDEXER_STATE_FILE}"
+
+VESPERA_VERSION="$(awk '/Version:/ {print $2}' "${VESPERA_DATA_DIR}/info/vespera.control")"
+
+lists_dir="$(awk '$1=="option" && $2=="lists_dir" {print $3; exit}' "${VESPERA_COMBINED_CONF_FILE}")"
+status_file="$(awk '$1=="option" && $2=="status_file" {print $3; exit}' "${VESPERA_COMBINED_CONF_FILE}")"
+
+[[ -e $VESPERA_FEEDS_SYMLINK ]] ||
+	{ echo "indexer: feeds file does not exist" >&2; exit 1; }
+
+if [[ -z "${lists_dir}" || -z "${status_file}" ]]; then
+    echo "vespera: required option(s) missing in merged config" >&2
+    exit 1
+fi
+
+if [[ -f "${VESPERA_COMBINED_CONF_FILE}" ]]; then
+    conf_file_hash="$(md5sum "${VESPERA_COMBINED_CONF_FILE}" | awk '{print $1}')"
+    conf_hash="$(printf '%s:%s' "${conf_file_hash}" "${VESPERA_VERSION}" | md5sum | awk '{print $1}')"
+else
+    conf_hash="missing"
+fi
+
+if [[ -f "${status_file}" ]]; then
+    status_hash="$(md5sum "${status_file}" | awk '{print $1}')"
+else
+    status_hash="missing"
+fi
+
+if [[ -d "${lists_dir}" ]]; then
+    lists_hash="$(find "${lists_dir}" -maxdepth 1 -type f -print0 | sort -z | xargs -0 cat 2>/dev/null | md5sum | awk '{print $1}')"
+else
+    lists_hash="missing"
+fi
+
+package_hash="$(printf '%s:%s' "${status_hash}" "${lists_hash}" | md5sum | awk '{print $1}')"
+
+if [[ -f "${VESPERA_INDEXER_STATE_FILE}" ]]; then
+	prev_conf_hash="$(awk -F'=' '$1=="conf_hash" {print $2; exit}' "${VESPERA_INDEXER_STATE_FILE}" 2>/dev/null)"
+	prev_package_hash="$(awk -F'=' '$1=="package_hash" {print $2; exit}' "${VESPERA_INDEXER_STATE_FILE}" 2>/dev/null)"
+fi
+
+[[ ! -f "${VESPERA_DATA_DIR}/feeds.json" ]] && prev_conf_hash=""
+[[ ! -f "${VESPERA_DATA_DIR}/packages.json" ]] && prev_package_hash=""
+
+if [[ -z "${prev_conf_hash}" || "${conf_hash}" != "${prev_conf_hash}" ]]; then
+	update_mode="all"
+elif [[ "${package_hash}" != "${prev_package_hash}" ]]; then
+	update_mode="packages"
+else
+	update_mode="none"
+fi
+
+if [[ "${update_mode}" == "none" ]]; then
+    exit 0
+fi
+
+"$__vespera_path/bin/opkg-json-indexer" "${VESPERA_COMBINED_CONF_FILE}" "${VESPERA_DATA_DIR}" "--update=${update_mode}"
+indexer_status=$?
+if [[ ${indexer_status} -eq 0 ]]; then
+    cat > "${VESPERA_INDEXER_STATE_FILE}" <<EOF
+conf_hash=${conf_hash}
+package_hash=${package_hash}
+EOF
+else
+	echo "${indexer_status}"
+fi
+
+exit "${indexer_status}"

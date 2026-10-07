@@ -1,0 +1,4 @@
+#!/bin/bash
+exec 2>&1
+. /etc/profile.d/profile.sh
+exec /data/apps/enabled/vespera/services/vespera/__main__.py

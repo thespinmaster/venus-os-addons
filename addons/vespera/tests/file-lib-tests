@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+. "$this_path/../src/data/apps/available/vespera/libs/file-lib"
+
+TEST_ROOT=
+
+stage_file_lib_runtime() {
+  TEST_ROOT="$(vt_make_test_root)"
+  mkdir -p "$TEST_ROOT/files"
+}
+
+cleanup_file_lib_runtime() {
+  [[ -n "${TEST_ROOT:-}" ]] && vt_safe_rm_rf "$TEST_ROOT"
+}
+
+test_file_lib_append_content_to_file_creates_parent_and_appends_once() {
+  stage_file_lib_runtime
+  local target="$TEST_ROOT/files/demo.conf"
+
+  file_lib_append_content_to_file "$target" 644 <<'EOF'
+line-a
+line-b
+EOF
+  file_lib_append_content_to_file "$target" 644 <<'EOF'
+line-a
+line-b
+EOF
+
+  assert_exitcode 0
+  assert_file_exists "$target"
+  assert_eq $'line-a\nline-b' "$(cat "$target")"
+
+  cleanup_file_lib_runtime
+}
+
+test_file_lib_remove_content_from_file_removes_exact_block() {
+  stage_file_lib_runtime
+  local target="$TEST_ROOT/files/demo.conf"
+
+  cat > "$target" <<'EOF'
+alpha
+line-a
+line-b
+omega
+EOF
+
+  file_lib_remove_content_from_file "$target" <<'EOF'
+line-a
+line-b
+EOF
+
+  assert_exitcode 0
+  assert_eq $'alpha\nomega' "$(cat "$target")"
+
+  cleanup_file_lib_runtime
+}
+
+test_file_lib_remove_file_if_empty_deletes_whitespace_only_file() {
+  stage_file_lib_runtime
+  local target="$TEST_ROOT/files/blank.conf"
+
+  printf '   \n\t\n' > "$target"
+
+  file_lib_remove_file_if_empty "$target"
+
+  assert_exitcode 0
+  assert_file_not_exist "$target"
+
+  cleanup_file_lib_runtime
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

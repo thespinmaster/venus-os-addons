@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+
+service_lib_service_up() { svstat "/service/${1}" | grep -q "^/service/${1}: up "; }
+
+service_lib_remove_service() {
+	local service="${1:-}" || return
+
+	[[ ! -e "/service/${service}" ]] &&
+		return
+
+	svc -dx "/service/$service"
+
+	[[ -d "/service/${service}/log" ]] &&
+		svc -dx "/service/${service}/log"
+
+	rm -rf "/service/${service}"
+
+}
+
+__create_templated_service() {
+	local service=$1
+	local tty=$2
+
+	local tty_service="$service.$2"
+	# check if service already exists
+	test -d "/service/$tty_service" && return 0
+
+	local tmpl=/opt/victronenergy/service-templates/$service
+
+	# check existence of service template
+	[[ ! -d "$tmpl" ]] && { echo "ERROR: no service template for $service" >&2; return 1; }
+
+	# copy service
+	local service_dir="/var/volatile/services"
+	cp -a "$tmpl" "$service_dir/$tty_service"
+
+	# Patch run files for tty device
+	sed -i "s:TTY:$tty:" "$service_dir/$tty_service/run"
+	sed -i "s:TTY:$tty:" "$service_dir/$tty_service/log/run"
+
+	# Create symlink to /service
+	ln -sf "$service_dir/$tty_service" "/service/$tty_service"
+
+	# wait for svscan to find service
+	sleep 6
+}
+
+service_lib_start_templated_service() {
+	local tty="$1"
+	local service="$2"
+
+  [[ -e "/dev/$tty" ]] || { echo "ERROR: invalid device $1" >&2; return 1; }
+	[[ -z "$service" ]] && { echo "ERROR: unknown service $2" >&2; return 1; }
+
+	get_product() {
+		udevadm info --query=property --name="$1" | sed -n "s/^ID_MODEL=//p"
+	}
+
+	__create_templated_service "$service" "$tty" || { echo "ERROR: could not create service" >&2; return 1; }
+
+	local tty_service="$service.$tty"
+	local service_dir="/var/volatile/services"
+
+	# update product string
+	PRODUCT=$(get_product "$tty")
+	sed -i "s:PRODUCT\(=[^ ]*\)*:PRODUCT=$PRODUCT:" "$service_dir/$tty_service/run"
+
+	svc -u "/service/$tty_service/log"
+	svc -u "/service/$tty_service"
+
+}
+

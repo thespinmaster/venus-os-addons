@@ -5,19 +5,19 @@
 ### com.victronenergy.settings
 Paths added by the Service when installed
 
-/Settings/opkg-manager/CustomServicePaths : `[DbusProductName]`|`[DbusProductName]`|`[DbusProductName]`  
-/Settings/opkg-manager/CustomServicePaths : "`Inetbox`|`NeShunt`|`DummyService`"  
+/Settings/vespera/CustomServicePaths : `[DbusProductName]`|`[DbusProductName]`|`[DbusProductName]`  
+/Settings/vespera/CustomServicePaths : "`Inetbox`|`NeShunt`|`DummyService`"  
 
-Each value in CustomServicePaths is the path name under /Settings/opkg-manager/CustomServices
+Each value in CustomServicePaths is the path name under /Settings/vespera/CustomServices
 
-/Settings/opkg-manager/CustomServices/`[DbusProductName]`
+/Settings/vespera/CustomServices/`[DbusProductName]`
 
 Examples:  
-/Settings/opkg-manager/CustomServices/`Inetbox`/...  
-/Settings/opkg-manager/CustomServices/`NeShunt`/...  
-/Settings/opkg-manager/CustomServices/`DummyService`/...  
+/Settings/vespera/CustomServices/`Inetbox`/...  
+/Settings/vespera/CustomServices/`NeShunt`/...  
+/Settings/vespera/CustomServices/`DummyService`/...  
 
-/Settings/opkg-manager/CustomServices/`[DbusProductName]`/`[Setting]`  
+/Settings/vespera/CustomServices/`[DbusProductName]`/`[Setting]`  
 
 | Setting | Value | Required | Notes |
 |---|---|---|---|
@@ -33,7 +33,7 @@ Values added by the service (when running)
 |---|---|---|
 | `CustomDevicePage`    | "OpkgCustomDevicePage_neshunt"  |  The name of the qml page to use
 | `CustomName`          | "My device 1"           |  User inputed text
-| `ServiceName`         | "`[ServiceName]`"       |  From /Settings/opkg-manager/CustomServices/`[DbusProductName]`/`[ServiceName]`
+| `ServiceName`         | "`[ServiceName]`"       |  From /Settings/vespera/CustomServices/`[DbusProductName]`/`[ServiceName]`
 | `Sid`                 | "`c7f2`"    |  A unique value used to find the device
 
  

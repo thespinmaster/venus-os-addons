@@ -28,14 +28,14 @@ echo "======================================="
 
 function create_latest_feed_package() {
 	local feed="${1}"
-	local newest_opkg_manager_ipk="$(find feeds/"${feed}"/opkg-manager -type f -name 'opkg-manager*.ipk' -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-)"
+    local newest_vespera_ipk="$(find feeds/"${feed}"/vespera -type f -name 'vespera*.ipk' -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-)"
 
-	if [ -n "$newest_opkg_manager_ipk" ]; then
-			latest_copy_path="$(dirname "$newest_opkg_manager_ipk")/opkg-manager-latest.ipk"
-			cp -f "$newest_opkg_manager_ipk" "$latest_copy_path"
+    if [ -n "$newest_vespera_ipk" ]; then
+            latest_copy_path="$(dirname "$newest_vespera_ipk")/vespera-latest.ipk"
+            cp -f "$newest_vespera_ipk" "$latest_copy_path"
 			echo "Created latest package copy: feeds/${feed}/$latest_copy_path"
 	else
-			echo "No opkg-manager*.ipk package found under feeds/${feed}"
+			echo "No vespera*.ipk package found under feeds/${feed}"
 	fi
 }
 

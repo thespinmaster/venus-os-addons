@@ -1,7 +1,0 @@
-#!/bin/bash
-
-set -o nounset
-
-this_path="$(dirname "${BASH_SOURCE[0]}")"
- 
-tar czf $this_path/venus-data-opkg-manager-blind-install.tgz -C $this_path/src/ .

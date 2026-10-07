@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-
-# mount-shares (do not edit)
-"${VENUS_ROOT_DIR:-}/data/mount-shares/mount-common" "mount-all"

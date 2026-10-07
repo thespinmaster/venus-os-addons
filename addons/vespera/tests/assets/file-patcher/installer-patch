@@ -1,0 +1,52 @@
+# file patch commands
+@openfile <3.70
+====
+/data/dev/addons/vespera/tests/assets/file-patcher/main.qml
+====
+@openfile >=3.70
+====
+/data/dev/addons/vespera/tests/assets/file-patcher/Main.qml
+====
+@findbackwards
+====
+}
+====
+@insertbefore
+====
+  // vespera 1.0
+  VesperaCustomOverviewPages {}
+====
+@openfile
+====
+/data/dev/addons/vespera/tests/assets/file-patcher/MbSubMenu.qml
+====
+@findbackwards
+====
+}
+====
+@insertbefore
+====
+	// vespera 1.0
+	VesperaPageSettingsCustomMenus {}
+====
+@openfile
+====
+/data/dev/addons/vespera/tests/assets/file-patcher/PageMain.qml
+====
+@findbackwards
+====
+}
+====
+@insertbefore
+====
+	// vespera 1.0
+	VesperaPageMain {}
+====
+@openfile
+====
+/data/dev/addons/vespera/tests/assets/file-patcher/serial-starter.conf
+====
+@append
+====
+include /data/apps/available/vespera/conf/serial-starter.conf
+====

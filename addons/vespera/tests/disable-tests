@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_root="$this_path/../src/data/apps/available/vespera"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+
+TEST_ROOT=
+TEST_APP_ROOT=
+TEST_DATA_DIR=
+
+stage_disable_runtime() {
+  TEST_ROOT="$(vt_make_test_root)"
+  TEST_APP_ROOT="$TEST_ROOT/data/apps/available/vespera"
+  TEST_DATA_DIR="$TEST_ROOT/data/var/vespera"
+
+  mkdir -p "$TEST_APP_ROOT/scripts" "$TEST_APP_ROOT/libs" "$TEST_APP_ROOT/conf" "$TEST_DATA_DIR/info" "$TEST_ROOT/bin"
+  mkdir -p "$TEST_ROOT/data/apps/enabled"
+
+  cp "$source_root/conf-default/vespera.conf" "$TEST_APP_ROOT/conf/vespera.conf"
+  cp "$source_root/scripts/disable" "$TEST_APP_ROOT/scripts/disable"
+  chmod +x "$TEST_APP_ROOT/scripts/disable"
+
+  cat > "$TEST_APP_ROOT/conf/vespera.conf" <<EOF
+#!/usr/bin/env bash
+VESPERA_DATA_DIR="/data/var/vespera"
+VESPERA_DBUS_NAME="dbus-name"
+EOF
+
+  cat > "$TEST_APP_ROOT/libs/opkg-lib" <<'EOF'
+#!/usr/bin/env bash
+opkg_lib_list_enabled_packages() {
+  printf '%s\n' demo
+}
+EOF
+
+  cat > "$TEST_APP_ROOT/scripts/remove-services" <<'EOF'
+#!/usr/bin/env bash
+printf 'remove-services:%s\n' "$*" >> "$TEST_LOG"
+EOF
+  chmod +x "$TEST_APP_ROOT/scripts/remove-services"
+
+  cat > "$TEST_DATA_DIR/info/vespera.overlay-lib" <<'EOF'
+#!/usr/bin/env bash
+printf 'overlay:%s\n' "$*" >> "$TEST_LOG"
+EOF
+  chmod +x "$TEST_DATA_DIR/info/vespera.overlay-lib"
+
+  cat > "$TEST_ROOT/bin/dbus" <<'EOF'
+#!/usr/bin/env bash
+printf 'dbus:%s\n' "$*" >> "$TEST_LOG"
+EOF
+  chmod +x "$TEST_ROOT/bin/dbus"
+
+  cat > "$TEST_DATA_DIR/info/demo.dbus-name" <<'EOF'
+com.example.demo
+EOF
+
+  ln -sf "$TEST_ROOT/data/apps/available/demo" "$TEST_ROOT/data/apps/enabled/demo"
+}
+
+cleanup_disable_runtime() {
+  [[ -n "${TEST_ROOT:-}" ]] && vt_safe_rm_rf "$TEST_ROOT"
+}
+
+test_disable_unlinks_app_and_marks_dbus_disabled() {
+  stage_disable_runtime
+  local log_file="$TEST_ROOT/disable.log"
+
+  TEST_LOG="$log_file" VESPERA_ROOT="$TEST_ROOT" PATH="$TEST_ROOT/bin:$PATH" \
+    bash "$TEST_APP_ROOT/scripts/disable" demo > "$TEST_ROOT/disable.out" 2>&1
+
+  assert_exitcode 0
+  assert_file_not_exist "$TEST_ROOT/data/apps/enabled/demo"
+  assert_file_contains "$log_file" 'remove-services:demo ___refresh_devices'
+  assert_file_contains "$log_file" 'overlay:overlay-unregister demo'
+  assert_file_contains "$log_file" 'dbus:-y com.victronenergy.settings /Settings/Vespera/Packages/com.example.demo/Enabled SetValue 0'
+  assert_file_contains "$TEST_ROOT/disable.out" "$TEST_DATA_DIR/info/demo.installer-services"
+
+  cleanup_disable_runtime
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

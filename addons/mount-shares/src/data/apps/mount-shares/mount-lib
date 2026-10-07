@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+
+__this_path="$(dirname "${BASH_SOURCE[0]}")"
+
+#source "$__this_path/../vespera/libs/source-lib"
+# addsource "libs/log-lib"
+
+# readonly mount_lib_path="/data/apps/mount-shares"
+readonly mountshares_conf_file="/data/conf/mount-shares.conf"
+
+# exposed so can override for mocking
+__mount_lib___read() {
+	# shellcheck disable=SC2162
+	read "$@"
+}
+
+__update_mount_settings() {
+	local new_entry="$*"
+	local line
+	local temp_file
+	local new_path
+	local existing_path
+
+	[[ -f "${mountshares_conf_file}" ]] || {
+		mkdir -p "$(dirname "${mountshares_conf_file}")"
+		echo "${new_entry}" >> "${mountshares_conf_file}"
+		return 0
+	}
+
+	temp_file="$(mktemp)" || return 1
+
+	# Extract destination path (last whitespace-separated field)
+	new_path="${new_entry##* }"
+
+	while IFS= read -r line || [[ -n "${line}" ]]; do
+		existing_path="${line##* }"
+
+		[[ "${existing_path}" == "${new_path}" ]] && continue
+
+		echo "${line}" >> "${temp_file}"
+	done < "${mountshares_conf_file}"
+
+	echo "${new_entry}" >> "${temp_file}"
+
+	mv "${temp_file}" "${mountshares_conf_file}"
+}
+
+##############################################
+# Waits for a mount point to become available.
+# Checks every 0.5 seconds.
+# Args:
+#   {1} mount point path (required)
+#   {2} tries or --quiet (optional, default: 10)
+#   {3} --quiet (optional)
+mount_lib_wait_on_mount_point() {
+	local mount_point="${1}"
+	local -i count=0 tries=10
+	local -i quiet=0
+
+	if [[ "${2:-}" == "--quiet" ]]; then
+		quiet=1
+	elif [[ -n "${2:-}" ]]; then
+		tries="${2}"
+	fi
+
+	[[ "${3:-}" == "--quiet" ]] && quiet=1
+
+	while ((count < tries)); do
+		mountpoint -q "$mount_point" && {
+			((quiet == 0)) && echo "ERROR mountpount available: ${1}" >&2
+			return 0
+		}
+		sleep .5
+		((count += 1))
+	done
+
+	((quiet == 0)) && echo "ERROR mountpount not available: ${1}" >&2
+	return 1
+}
+
+#############################################################################
+# Mounts using raw passthrough mount arguments.
+# Args:
+#   {*} mount command args passed directly to mount
+#############################################################################
+mount_lib_mount_server() {
+
+	[[ -n "$*" ]] || {
+		echo "ERROR: mount args missing" >&2
+		return 1
+	}
+
+	local mount_point="${!#}"
+
+	if [[ "${mount_point}" == /* ]] && [[ ! -d "${mount_point}" ]]; then
+		mkdir -p "${mount_point}" || {
+			echo "ERROR: Unable to create mountpoint folder" >&2
+			return 1
+	}
+	fi
+
+	busybox mount "$@"
+}
+
+##############################################
+# Reads mountpoints.conf and mounts each saved entry.
+# Expected config format per line:
+#   <mount args> <target path>
+# Blank and comment lines are skipped.
+mount_lib_mount_all() {
+	local line
+	local -a mount_args=()
+
+	if [[ ! -f "${mountshares_conf_file}" ]]; then
+		echo "missing mountpoint.conf file"
+		return 0
+	fi
+
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		[[ -z "$line" || "$line" == [[:blank:]#]* ]] && continue
+
+		read -r -a mount_args <<< "$line"
+		((${#mount_args[@]} > 1)) || continue
+
+		[[ "${mount_args[-1]}" == /* ]] || continue
+
+		mount_lib_mount_server "${mount_args[@]}" &
+	done < "${mountshares_conf_file}"
+
+	return 0
+}
+
+mount_lib_mount() {
+	mount_lib_mount_server "$@" || return 1
+
+	__update_mount_settings "$@"
+}
+
+# exposed so can override for mocking
+# overriding read call in bashdb fails
+__mount_lib___read() {
+	# shellcheck disable=SC2162
+	read "$@"
+}
+
+mount_lib_mountprompt() {
+	local source target username password options type
+
+	__mount_lib___read -r -p "Enter the mount type cifs|nfs [default cifs]: " type
+	__mount_lib___read -r -p "Enter server ip/host address and path: " source
+	[[ -z "${source}" ]] && { echo "cancelled"; return 1; }
+	__mount_lib___read -r -p "Enter local mount point folder: [default folder /data/mnt/]: " target
+	[[ -z "${target}" ]] && { echo "cancelled"; return 1; }
+	__mount_lib___read -r -p "Enter username for share: " username
+	__mount_lib___read -r -s -p "Enter password for share: " password
+	echo
+	__mount_lib___read -r -p "Enter extra options [defaults exec,mfsymlinks ('none'; no options)]: " options
+
+	type="${type:-cifs}"
+	options="${options:-exec,mfsymlinks}"
+	[[ "${source:0:2}" != "//" ]] && source="//${source}"
+	[[ "${target:0:1}" != "/" ]] && target="/data/mnt/$target"
+	[[ "${options}" == "none" ]] && options=""
+	[[ -n "${options}" ]] && options=",${options}"
+
+	# shellcheck disable=SC2140
+	mount_lib_mount -t "${type}" -o "username=${username},password=${password}${options}" "${source}" "${target}"
+	echo "done"
+
+}
+
+
+# Removes a saved mount entry by target path from mountpoints.conf.
+# Args:
+#   {1} mount target path
+mount_lib_remove_mount() {
+	[[ -f "${mountshares_conf_file}" ]] || return 0
+
+	local mount_target="${1}"
+	local line
+	local temp_file
+
+	temp_file="$(mktemp)"
+	while IFS= read -r line || [[ -n "${line}" ]]; do
+		[[ "${line##* }" == "${mount_target}" ]] && continue
+		echo "${line}" >> "${temp_file}"
+	done < "${mountshares_conf_file}"
+
+	mv "${temp_file}" "${mountshares_conf_file}"
+
+	return 0
+}
+
+case "${1:-}" in
+	mount_server)
+		shift
+		mount_lib_mount_server "$@"
+		;;
+	mount)
+		shift
+		mount_lib_mount "$@"
+		;;
+	mount-all)
+		shift
+		mount_lib_mount_all
+		;;
+	waitformount)
+		shift
+		mount_lib_wait_on_mount_point "$@"
+		;;
+	*)
+		shift
+		mount_lib_mountprompt
+		;;
+esac

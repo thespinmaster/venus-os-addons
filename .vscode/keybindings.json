@@ -1,0 +1,8 @@
+[
+  {
+    "key": "ctrl+alt+b",
+    "command": "workbench.action.tasks.runTask",
+    "args": "Bash -n current file",
+    "when": "editorTextFocus"
+  }
+]

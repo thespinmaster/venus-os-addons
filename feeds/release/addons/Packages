@@ -1,6 +1,6 @@
 Package: dbus-inetbox
 Version: 1.1.0+d260530.0947
-Depends: opkg-manager
+Depends: vespera
 Section: utilities
 Architecture: all
 Maintainer: thespinmaster@github.com
@@ -15,7 +15,7 @@ Priority: optional
 
 Package: dbus-ne-shunt
 Version: 1.1.0+d260530.0947
-Depends: opkg-manager
+Depends: vespera
 Section: utilities
 Architecture: all
 Maintainer: thespinmaster@github.com
@@ -30,7 +30,7 @@ Priority: optional
 
 Package: dbus-relay-board
 Version: 1.0.0+dev.20260518.100344
-Depends: opkg-manager
+Depends: vespera
 Section: utilities
 Architecture: all
 Maintainer: Lucien Denisey <ldenisey@gmail.com>
@@ -46,7 +46,7 @@ Priority: optional
 
 Package: mount-shares
 Version: 1.1.0+d260530.0947
-Depends: opkg-manager
+Depends: vespera
 Section: utilities
 Architecture: all
 Maintainer: thespinmaster@github.com
@@ -61,7 +61,7 @@ Priority: optional
 
 Package: network-gps
 Version: 1.1.0+d260530.0947
-Depends: opkg-manager
+Depends: vespera
 Section: utilities
 Architecture: all
 Maintainer: thespinmaster@github.com
@@ -76,7 +76,7 @@ Priority: optional
 
 Package: themer
 Version: 1.1.0+d260530.0947
-Depends: opkg-manager
+Depends: vespera
 Section: utilities
 Architecture: all
 Maintainer: thespinmaster@github.com

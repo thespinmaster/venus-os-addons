@@ -7,8 +7,8 @@ set -o nounset
 declare this_path; this_path="$(dirname "${BASH_SOURCE[0]}")"
 
 LIBS_SOURCE_PATH="$this_path/../../../scripts/libs"
-LIBS_TARGET_PATH="$this_path/../src/data/opkg-manager/libs"
- 
+LIBS_TARGET_PATH="$this_path/../src/data/apps/vespera/libs"
+
 LIB_FILES=(
   conf-lib
   core-lib

@@ -38,15 +38,15 @@ chmod +x /data/dev-setup
      libatomic1 (required by Python 3)  
 
 #### Install custom packages
-     opkg-manager: A package for installing custom opkg packages on the Venus OS which will automatically get re-installed after firmware updates  
+     vespera: A package for installing custom opkg packages on the Venus OS which will automatically get re-installed after firmware updates  
      mount-shares: A package for mounting nfs and cfs shares  
 
 
-## Install opkg-manager only
+## Install vespera only
 ```
-wget https://raw.githubusercontent.com/thespinmaster/venus-os/refs/heads/main/tasks/install-opkg-manager -O /tmp/install-opkg-manager
-chmod +x /tmp/install-opkg-manager
-/tmp/install-opkg-manager
+wget https://raw.githubusercontent.com/thespinmaster/venus-os/refs/heads/main/tasks/install-vespera -O /tmp/install-vespera
+chmod +x /tmp/install-vespera
+/tmp/install-vespera
 
 ```
 

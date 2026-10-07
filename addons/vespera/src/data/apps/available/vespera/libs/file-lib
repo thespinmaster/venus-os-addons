@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+__file_lib_normalize_block() {
+	local text="${1-}"
+
+	# Normalize line endings and trim blank lines around the block.
+	text="${text//$'\r'/}"
+	while [[ "$text" == $'\n'* ]]; do
+		text="${text#$'\n'}"
+	done
+	while [[ "$text" == *$'\n' ]]; do
+		text="${text%$'\n'}"
+	done
+
+	printf '%s' "$text"
+}
+
+# Adds content from stdin to a file if it does not already exist.
+# Creates the parent directory and optionaly sets the file mode when content is added.
+file_lib_append_content_to_file() {
+	local file="$1"
+	local mode="${2:-}"
+	local contents
+	local existing
+	local needle
+
+	contents="$(__file_lib_normalize_block "$(cat)")"
+	[[ -n "$contents" ]] || return 0
+
+	mkdir -p "${file%/*}" || return 1
+	if [[ -f "$file" ]]; then
+		existing="$(__file_lib_normalize_block "$(cat "$file")")"
+		needle=$'\n'"$contents"$'\n'
+		[[ $'\n'"$existing"$'\n' == *"$needle"* ]] && return 0
+	fi
+
+	printf '%s\n' "$contents" >> "$file"
+
+	[[ -n "$mode" ]] && chmod "$mode" "$file"
+}
+
+# Remove the first exact occurrence from a file using the content from stdin.
+# Does nothing if the file or code does not exist.
+file_lib_remove_content_from_file() {
+	local file="$1"
+	local contents
+	local file_contents
+	local needle
+	local wrapped
+
+	contents="$(__file_lib_normalize_block "$(cat)")"
+	[[ -n "$contents" ]] || return 0
+
+	[[ -f "$file" ]] || return 0
+
+	file_contents="$(__file_lib_normalize_block "$(cat "$file")")"
+	needle=$'\n'"$contents"$'\n'
+	wrapped=$'\n'"$file_contents"$'\n'
+
+	[[ "$wrapped" == *"$needle"* ]] || return 0
+
+	while [[ "$wrapped" == *"$needle"* ]]; do
+		wrapped="${wrapped/"$needle"/$'\n'}"
+	done
+
+	file_contents="${wrapped#$'\n'}"
+	file_contents="${file_contents%$'\n'}"
+	[[ -n "$file_contents" ]] && printf '%s\n' "$file_contents" > "$file" || : > "$file"
+}
+
+file_lib_remove_file_if_empty() {
+	local file="${1}"
+	[[ -f "$file" ]] && [[ -z "$(sed 's/[[:space:]]//g' "$file")" ]] && rm -f "$file"
+}

@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_root="$this_path/../src/data/apps/available/vespera"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+
+TEST_ROOT=
+TEST_APP_ROOT=
+TEST_DATA_DIR=
+
+stage_enable_runtime() {
+  TEST_ROOT="$(vt_make_test_root)"
+  TEST_APP_ROOT="$TEST_ROOT/data/apps/available/vespera"
+  TEST_DATA_DIR="$TEST_ROOT/data/var/vespera"
+
+  mkdir -p "$TEST_APP_ROOT/scripts" "$TEST_APP_ROOT/libs" "$TEST_APP_ROOT/conf" "$TEST_DATA_DIR/info" "$TEST_ROOT/bin"
+  mkdir -p "$TEST_ROOT/data/apps/available/demo/gui-v2" "$TEST_ROOT/data/apps/enabled"
+
+  cp "$source_root/conf-default/vespera.conf" "$TEST_APP_ROOT/conf/vespera.conf"
+  cp "$source_root/scripts/enable" "$TEST_APP_ROOT/scripts/enable"
+  chmod +x "$TEST_APP_ROOT/scripts/enable"
+
+  cat > "$TEST_APP_ROOT/conf/vespera.conf" <<EOF
+#!/usr/bin/env bash
+VESPERA_DATA_DIR="/data/var/vespera"
+VESPERA_DBUS_NAME="dbus-name"
+EOF
+
+  cat > "$TEST_APP_ROOT/libs/opkg-lib" <<'EOF'
+#!/usr/bin/env bash
+opkg_lib_list_packages() {
+  printf '%s\n' demo
+}
+EOF
+
+  cat > "$TEST_APP_ROOT/scripts/start-app-services" <<'EOF'
+#!/usr/bin/env bash
+printf 'start:%s\n' "$*" >> "$TEST_LOG"
+echo 2
+EOF
+  chmod +x "$TEST_APP_ROOT/scripts/start-app-services"
+
+  cat > "$TEST_DATA_DIR/info/vespera.overlay-lib" <<'EOF'
+#!/usr/bin/env bash
+printf 'overlay:%s\n' "$*" >> "$TEST_LOG"
+cat >/dev/null
+EOF
+  chmod +x "$TEST_DATA_DIR/info/vespera.overlay-lib"
+
+  cat > "$TEST_ROOT/bin/dbus" <<'EOF'
+#!/usr/bin/env bash
+printf 'dbus:%s\n' "$*" >> "$TEST_LOG"
+EOF
+  chmod +x "$TEST_ROOT/bin/dbus"
+
+  cat > "$TEST_DATA_DIR/info/demo.dbus-name" <<'EOF'
+com.example.demo
+EOF
+
+  cat > "$TEST_DATA_DIR/info/demo.installer-overlays" <<'EOF'
+/overlay/one
+EOF
+
+  : > "$TEST_ROOT/data/apps/available/demo/gui-v2/demo.json.install"
+}
+
+cleanup_enable_runtime() {
+  [[ -n "${TEST_ROOT:-}" ]] && vt_safe_rm_rf "$TEST_ROOT"
+}
+
+test_enable_sets_symlink_renames_json_and_updates_dbus() {
+  stage_enable_runtime
+  local log_file="$TEST_ROOT/enable.log"
+
+  TEST_LOG="$log_file" VESPERA_ROOT="$TEST_ROOT" PATH="$TEST_ROOT/bin:$PATH" \
+    bash "$TEST_APP_ROOT/scripts/enable" demo > "$TEST_ROOT/enable.out" 2>&1
+
+  assert_exitcode 0 "enable exits successfully"
+  [[ -L "$TEST_ROOT/data/apps/enabled/demo" ]]
+  assert_result "$?" "Enabled app path is a symlink"
+  assert_file_exists "$TEST_ROOT/data/apps/available/demo/gui-v2/demo.json" "enable renames gui json into active file"
+  assert_file_not_exist "$TEST_ROOT/data/apps/available/demo/gui-v2/demo.json.install" "enable removes .install suffix source file"
+  assert_file_contains "$log_file" 'overlay:overlay-register demo' "enable registers overlay for demo"
+  assert_file_contains "$log_file" 'start:demo com.example.demo' "enable starts app services with dbus name"
+  assert_file_contains "$log_file" 'dbus:-y com.victronenergy.settings /Settings/Vespera/Packages/com.example.demo/Enabled SetValue 1' "enable sets package enabled dbus setting"
+  assert_file_contains "$TEST_ROOT/enable.out" '_refresh_devices="true"' "enable outputs refresh devices indicator"
+
+  cleanup_enable_runtime
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

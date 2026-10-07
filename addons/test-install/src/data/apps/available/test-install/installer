@@ -1,0 +1,21 @@
+#!/bin/bash
+# shellcheck disable=SC2034
+
+PACKAGE_DBUS_NAME="TestInstall"
+
+declare -A PACKAGE_DEVICE=(
+	["test-install"]="Test Install"
+)
+
+PACKAGE_DBUS_SETTINGS=
+
+# pre_install() {
+
+# }
+# pre_remove() {
+
+# }
+
+# shellcheck source=/data/dev/addons/vespera/src/data/apps/vespera/libs/source-lib
+source "${VESPERA_ROOT:-}/data/apps/available/vespera/libs/source-lib"
+addsource libs/installer-lib "$@"

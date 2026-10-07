@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+
+export LANG_CODE=
+
+function lang_lib_set_lang_code() {
+	local caller_path="${1}"
+
+	# Always use dbus gui setting
+
+	LANG_CODE="$(dbus -y com.victronenergy.settings /Settings/Gui/Language GetValue 2>/dev/null)"
+	LANG_CODE="${LANG_CODE#\'}"; LANG_CODE="${LANG_CODE%\'}"
+
+	if [[ -z "${LANG_CODE}" ]]; then
+		LANG_CODE="${LC_ALL:-${LC_MESSAGES:-${LC_CTYPE:-${LANG:-}}}}"
+		LANG_CODE="${LANG_CODE%%.*}"
+	fi
+
+	[[ ! -f "/$caller_path/lang/strings-${LANG_CODE}" ]] &&
+		LANG_CODE="${LANG_CODE%%_*}" # fallback from [country_region] to [country]
+
+}
+
+# shellcheck disable=SC2120
+function lang_lib_load_strings() {
+ 
+	local caller_path; caller_path="${1-${BASH_SOURCE[1]}}"
+
+	if [[ -z "${2:-}" ]]; then
+		lang_lib_set_lang_code "${caller_path}"
+	else
+		LANG_CODE="${2}"
+	fi
+
+	[[ "${LANG_CODE:2}" != "en" ]] && {
+		# shellcheck disable=SC1091
+		source "$caller_path/lang/strings-en" # always load en
+	}
+
+	# shellcheck disable=SC1090
+	source "$caller_path/lang/strings-$LANG_CODE"
+}
+
+function echo_lang() {
+	local format="$1"
+	shift
+
+	if [[ "$format" == *%* ]]; then
+		if [[ "$format" == *%*%* ]]; then
+			# shellcheck disable=SC2059
+			printf "$format" "$@"
+		else
+			# shellcheck disable=SC2059
+			printf "$format" "$*"
+		fi
+	else
+		printf '%s' "$format" "$@"
+	fi
+
+	printf '\n'
+}
+
+# optional path, optional en code
+lang_lib_load_strings "${1:-}" "${2:-}"

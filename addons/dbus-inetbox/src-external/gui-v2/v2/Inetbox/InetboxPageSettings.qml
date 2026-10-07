@@ -1,19 +1,17 @@
 import QtQuick 2
 import Victron.VenusOS
-// import "qrc:/OpkgManager/components"
-import "qrc:/OpkgManager/components/OpkgSingleton.js" as OpkgSingleton
 
 Page {
-	id: page
+	id: root
 	//% "Inetbox settings"
 	title: qsTrId("inetbox_settings")
 
+	property var pageUri:"qrc:/Inetbox/MotorhomePage.qml"
 	property var customPagesArray: customPagesItem.valid ? JSON.parse(customPagesItem.value): []
-	property bool loaded
 
 	VeQuickItem {
 		id: customPagesItem
-		uid: !!Global.systemSettings ? Global.systemSettings.serviceUid + "/Settings/OpkgManager/CustomPages" : ""
+		uid: !!Global.systemSettings ? Global.systemSettings.serviceUid + "/Settings/Vespera/CustomNavPages" : ""
 	}
 
 	GradientListView {
@@ -22,17 +20,30 @@ Page {
 		model: VisibleItemModel {
 
 			ListSwitch {
-				dataItem.uid:!!Global.systemSettings ? Global.systemSettings.serviceUid + "/Settings/Inetbox/ShowMotorhomePage" : ""
+				id: show_mh_page_switch
+				checkable: true
+				checked: root.customPagesArray.includes(root.pageUri)
+
 				//% "Show Motorhome Page"
 				text: qsTrId("inetbox_show_motorhome_page")
 				writeAccessLevel: VenusOS.User_AccessType_User
+
 				onCheckedChanged: {
-							OpkgSingleton.toggleCustomPage("qrc:/Inetbox/MotorhomePage.qml", checked)
+					const idx = root.customPagesArray.indexOf(root.pageUri)
+					if (checked) {
+						if (idx !== -1) return
+						root.customPagesArray.push(root.pageUri)
+					} else {
+						if (idx === -1) return
+						root.customPagesArray.splice(idx, 1)
 					}
+
+					customPagesItem.setValue(JSON.stringify(root.customPagesArray))
 				}
+			}
 
 			ListText {
-				text: qsTrId("opkg_version")
+				text: qsTrId("vespera_version")
 				secondaryText: GuiPluginLoader.plugin("Inetbox").version
 			}
 

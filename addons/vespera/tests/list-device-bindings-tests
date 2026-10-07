@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_root="$this_path/../src/data/apps/available/vespera"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+
+TEST_ROOT=
+TEST_SCRIPT=
+
+stage_bindings_runtime() {
+  TEST_ROOT="$(vt_make_test_root)"
+  mkdir -p "$TEST_ROOT/bin"
+
+  TEST_SCRIPT="$TEST_ROOT/list-device-bindings"
+  cp "$source_root/scripts/list-device-bindings" "$TEST_SCRIPT"
+  chmod +x "$TEST_SCRIPT"
+
+  cat > "$TEST_ROOT/bin/dbus" <<'EOF'
+#!/usr/bin/env bash
+cat <<OUT
+{ 'sid_abcd/DeviceKey': 'com.example.demo',
+  'sid_ef12/DeviceKey': 'com.example.other',
+  'sid_ffff/DeviceKey': 'com.example.demo' }
+OUT
+EOF
+  chmod +x "$TEST_ROOT/bin/dbus"
+}
+
+cleanup_bindings_runtime() {
+  [[ -n "${TEST_ROOT:-}" ]] && vt_safe_rm_rf "$TEST_ROOT"
+}
+
+test_list_device_bindings_returns_matching_sid_values() {
+  stage_bindings_runtime
+
+  local output
+  output="$(PATH="$TEST_ROOT/bin:$PATH" bash "$TEST_SCRIPT" 'com.example.demo')"
+
+  assert_exitcode 0
+  assert_eq $'abcd\nffff' "$output"
+
+  cleanup_bindings_runtime
+}
+
+test_list_device_bindings_returns_nothing_without_argument() {
+  stage_bindings_runtime
+
+  local output
+  output="$(PATH="$TEST_ROOT/bin:$PATH" bash "$TEST_SCRIPT")"
+
+  assert_exitcode 0
+  assert_empty "$output"
+
+  cleanup_bindings_runtime
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

@@ -1,5 +1,5 @@
 #!/bin/bash
- 
+
 if [[ -n "$D" ]]; then
   return;
 fi
@@ -10,7 +10,8 @@ declare service_name="$package_name"
 # copy service, svscan will detect the new files & avoid a reboot
 cp -R "/opt/victronenergy/service/${service_name}/" /service/
 
-source "${VENUS_ROOT_DIR:-}/data/opkg-manager/opkg-common"
-opkg_common_register_package "${package_name}"
- 
+# shellcheck source=/data/dev/addons/vespera/src/data/apps/vespera/libs/opkg-lib
+source "/data/apps/vespera/libs/opkg-lib"
+opkg_lib_register_package "${package_name}"
+
 echo "${package_name} installed"

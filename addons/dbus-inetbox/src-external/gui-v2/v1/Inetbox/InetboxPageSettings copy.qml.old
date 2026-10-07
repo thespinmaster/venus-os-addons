@@ -5,7 +5,7 @@ Page {
 	id: page
 	title: qsTr("Open Package Manager")
 
-	Component.onDestruction: opkgManager?.cleanup()
+	Component.onDestruction: vespera?.cleanup()
 	Component.onCompleted: {
 		console.log("HELLO WORLD:InetboxPageSettings")
 	}

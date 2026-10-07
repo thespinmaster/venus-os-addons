@@ -23,8 +23,8 @@ DEVICE_SERVICE_MAPPING_NAME              | string |          |
 DEVICE_TTY                               | string |          |
 SERVICE_PATH                      | string | required | /service 
 SERIAL_STARTER_START_SERVICE_PATH | string | required | /dev/serial-starter
-SERIAL_STARTER_RULES_FILE         | string | required | /home/admin/dev/projects/venus-os/addons/opkg-manager/tests/output/serial-starter.rules
-SERIAL_STARTER_RULES_FILE_SYMLINK | string |          | /home/admin/dev/projects/venus-os/addons/opkg-manager/tests/output/opkg-manager-serial-starter.rules
+SERIAL_STARTER_RULES_FILE         | string | required | /home/admin/dev/projects/venus-os/addons/vespera/tests/output/serial-starter.rules
+SERIAL_STARTER_RULES_FILE_SYMLINK | string |          | /home/admin/dev/projects/venus-os/addons/vespera/tests/output/vespera-serial-starter.rules
 DEVICE_UDEV_PROPS                     | string | required | ID_BUS=,ID_VENDOR=,ID_MODEL=,ID_SERIAL=
 USE_UDEVADM_MONITOR               | int    |          | 1
 USB_TIMEOUT                       | int    |          | 30

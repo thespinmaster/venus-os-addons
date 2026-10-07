@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_root="$this_path/../src/data/apps/available/vespera"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+
+TEST_ROOT=
+TEST_APP_ROOT=
+TEST_DATA_DIR=
+
+stage_start_services_runtime() {
+  TEST_ROOT="$(vt_make_test_root)"
+  TEST_APP_ROOT="$TEST_ROOT/data/apps/available/vespera"
+  TEST_DATA_DIR="$TEST_ROOT/data/var/vespera"
+
+  mkdir -p "$TEST_APP_ROOT/conf" "$TEST_APP_ROOT/libs" "$TEST_APP_ROOT/scripts" "$TEST_ROOT/data/apps/available/demo/service" "$TEST_ROOT/data/apps/available/demo/service-templates" "$TEST_DATA_DIR/info" "$TEST_ROOT/bin" "$TEST_ROOT/service" "$TEST_ROOT/opt/victronenergy/service-templates"
+
+	cp "$source_root/conf-default/vespera.conf" "$TEST_APP_ROOT/conf"
+	cp "$source_root/scripts/start-app-services" "$TEST_APP_ROOT/scripts"
+
+  cat > "$TEST_APP_ROOT/libs/device-lib" <<'EOF'
+#!/usr/bin/env bash
+printf 'device-lib:%s\n' "$*" >> "$TEST_LOG"
+EOF
+  chmod +x "$TEST_APP_ROOT/libs/device-lib"
+
+  cat > "$TEST_ROOT/bin/svc" <<'EOF'
+#!/usr/bin/env bash
+printf 'svc:%s\n' "$*" >> "$TEST_LOG"
+EOF
+  chmod +x "$TEST_ROOT/bin/svc"
+
+  cat > "$TEST_ROOT/bin/svstat" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${SERIAL_STARTER_UP:-1}" == "1" ]]; then
+  printf '%s: up (pid 10) 3 seconds\n' "$1"
+else
+  printf '%s: down 3 seconds\n' "$1"
+fi
+EOF
+  chmod +x "$TEST_ROOT/bin/svstat"
+}
+
+cleanup_start_services_runtime() {
+  [[ -n "${TEST_ROOT:-}" ]] && vt_safe_rm_rf "$TEST_ROOT"
+}
+
+test_start_app_services_starts_existing_service_and_copies_missing_service() {
+  stage_start_services_runtime
+
+	local log_file="$TEST_ROOT/start-services.log"
+
+  mkdir -p "$TEST_ROOT/service/svc-a" "$TEST_ROOT/service/svc-a/log"
+  mkdir -p "$TEST_ROOT/data/apps/available/demo/service/svc-b"
+
+  echo svc-a > "$TEST_DATA_DIR/info/demo.app-services"
+	echo svc-b >> "$TEST_DATA_DIR/info/demo.app-services"
+
+	TEST_LOG="$log_file" \
+	VESPERA_ROOT="$TEST_ROOT" \
+	SERIAL_STARTER_UP=1 \
+	PATH="$TEST_ROOT/bin:$PATH" \
+	bash "$TEST_ROOT/data/apps/available/vespera/scripts/start-app-services" demo com.example.demo
+
+  assert_exitcode 1
+
+  assert_file_contains "$log_file" "svc:-u $TEST_ROOT/service/svc-a"
+	assert_file_not_contain "$log_file" "svc:-u $TEST_ROOT/service/svc-b"
+  assert_dir_exists "$TEST_ROOT/service/svc-b"
+
+  cleanup_start_services_runtime
+}
+
+test_start_app_services_uses_device_lib_when_templates_exist_and_serial_starter_down() {
+  stage_start_services_runtime
+  vt_set_conf_value VESPERA_ALWAYS_START_SERVICES true
+
+  local log_file="$TEST_ROOT/start-services.log"
+
+  mkdir -p "$TEST_ROOT/data/apps/available/demo/service-templates/tpl-a"
+  echo tpl-a > "$TEST_DATA_DIR/info/demo.app-template-services"
+
+  TEST_LOG="$log_file" VESPERA_ROOT="$TEST_ROOT" SERIAL_STARTER_UP=0 \
+		PATH="$TEST_ROOT/bin:$PATH" \
+		bash "$TEST_ROOT/data/apps/available/vespera/scripts/start-app-services" demo com.example.demo
+
+  assert_exitcode 1
+	assert_file_exists "$log_file"
+
+  assert_file_contains "$log_file" 'device-lib:start-all-device-services com.example.demo'
+  [[ -L "$TEST_ROOT/opt/victronenergy/service-templates/tpl-a" ]]
+  assert_result "$?" 'Template service symlink created'
+
+  cleanup_start_services_runtime
+}
+
+test_start_app_services_sets_refresh_devices_when_templates_exist_and_serial_starter_up() {
+	stage_start_services_runtime
+	vt_set_conf_value VESPERA_ALWAYS_START_SERVICES true
+
+	local log_file="$TEST_ROOT/start-services.log"
+
+  mkdir -p "$TEST_ROOT/data/apps/available/demo/service-templates/tpl-a"
+  echo tpl-a > "$TEST_DATA_DIR/info/demo.app-template-services"
+
+  TEST_LOG="$log_file" VESPERA_ROOT="$TEST_ROOT" SERIAL_STARTER_UP=1 \
+		PATH="$TEST_ROOT/bin:$PATH" \
+		bash "$TEST_ROOT/data/apps/available/vespera/scripts/start-app-services" demo com.example.demo
+
+  assert_exitcode 2
+	assert_file_not_exist "$log_file"
+  [[ -L "$TEST_ROOT/opt/victronenergy/service-templates/tpl-a" ]]
+  assert_result "$?" 'Template service symlink created'
+
+  cleanup_start_services_runtime
+}
+#test_start_app_services_starts_existing_service_and_copies_missing_service
+#test_start_app_services_uses_device_lib_when_templates_exist_and_serial_starter_down
+ 
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

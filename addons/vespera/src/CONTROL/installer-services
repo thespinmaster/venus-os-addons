@@ -1,0 +1,4 @@
+# list of services to restart on enable/disable
+/service/gui
+/service/flashmq
+/service/start-gui

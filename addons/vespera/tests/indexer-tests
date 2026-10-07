@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_root="$this_path/../src/data/apps/available/vespera"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+
+TEST_ROOT=
+TEST_APP_ROOT=
+TEST_DATA_DIR=
+
+stage_indexer_runtime() {
+  TEST_ROOT="$(vt_make_test_root)"
+  TEST_APP_ROOT="$TEST_ROOT/data/apps/available/vespera"
+  TEST_DATA_DIR="$TEST_ROOT/data/var/vespera"
+
+  mkdir -p "$TEST_APP_ROOT/scripts" "$TEST_APP_ROOT/conf" "$TEST_APP_ROOT/bin"
+  mkdir -p "$TEST_DATA_DIR/info" "$TEST_DATA_DIR/lists"
+
+  cp "$source_root/conf-default/vespera.conf" "$TEST_APP_ROOT/conf/vespera.conf"
+  cp "$source_root/scripts/indexer" "$TEST_APP_ROOT/scripts/indexer"
+  chmod +x "$TEST_APP_ROOT/scripts/indexer"
+
+  cat > "$TEST_APP_ROOT/conf/vespera.conf" <<EOF
+#!/usr/bin/env bash
+VESPERA_DATA_DIR="/data/var/vespera"
+VESPERA_FEEDS_CONF_FILE="/data/apps/available/vespera/conf/opkg.conf"
+VESPERA_COMBINED_CONF_FILE="/data/var/vespera/opkg.conf"
+VESPERA_INDEXER_STATE_FILE="/data/var/vespera/indexer.md5"
+EOF
+
+  cat > "$TEST_DATA_DIR/info/vespera.control" <<'EOF'
+Package: vespera
+Version: 9.9.9
+EOF
+
+  cat > "$TEST_APP_ROOT/conf/opkg.conf" <<EOF
+option lists_dir $TEST_DATA_DIR/lists
+option status_file $TEST_DATA_DIR/status
+EOF
+
+  cat > "$TEST_DATA_DIR/opkg.conf" <<EOF
+option lists_dir $TEST_DATA_DIR/lists
+option status_file $TEST_DATA_DIR/status
+EOF
+
+  cat > "$TEST_DATA_DIR/feeds-release.conf" <<'EOF'
+src/gz vespera http://example.com
+EOF
+
+  ln -sfn "$TEST_DATA_DIR/feeds-release.conf" "$TEST_DATA_DIR/feeds.conf"
+  assert_file_exists "$TEST_DATA_DIR/feeds.conf"
+  assert_eq "$TEST_DATA_DIR/feeds-release.conf" "$(readlink "$TEST_DATA_DIR/feeds.conf")"
+
+  cat > "$TEST_DATA_DIR/status" <<'EOF'
+Package: demo
+Version: 1.0
+EOF
+
+  cat > "$TEST_DATA_DIR/lists/a.list" <<'EOF'
+demo - 1.0
+EOF
+
+  cat > "$TEST_APP_ROOT/bin/opkg-json-indexer" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TEST_LOG"
+# mimic generated files
+: > "$2/feeds.json"
+: > "$2/packages.json"
+EOF
+  chmod +x "$TEST_APP_ROOT/bin/opkg-json-indexer"
+
+  : > "$TEST_ROOT/indexer.log"
+}
+
+cleanup_indexer_runtime() {
+  [[ -n "${TEST_ROOT:-}" ]] && vt_safe_rm_rf "$TEST_ROOT"
+}
+
+test_indexer_runs_with_update_all_when_state_missing() {
+  stage_indexer_runtime
+
+  TEST_LOG="$TEST_ROOT/indexer.log" VESPERA_ROOT="$TEST_ROOT" bash "$TEST_APP_ROOT/scripts/indexer"
+
+  assert_exitcode 0
+  assert_file_contains "$TEST_ROOT/indexer.log" '--update=all'
+  assert_file_contains "$TEST_DATA_DIR/indexer.md5" 'conf_hash='
+  assert_file_contains "$TEST_DATA_DIR/indexer.md5" 'package_hash='
+
+  cleanup_indexer_runtime
+}
+
+test_indexer_skips_when_hashes_unchanged() {
+  stage_indexer_runtime
+
+  TEST_LOG="$TEST_ROOT/indexer.log" VESPERA_ROOT="$TEST_ROOT" bash "$TEST_APP_ROOT/scripts/indexer"
+  assert_exitcode 0
+
+  TEST_LOG="$TEST_ROOT/indexer.log" VESPERA_ROOT="$TEST_ROOT" bash "$TEST_APP_ROOT/scripts/indexer"
+  assert_exitcode 0
+
+  local run_count
+  run_count="$(wc -l < "$TEST_ROOT/indexer.log")"
+  assert_eq '1' "$run_count"
+
+  cleanup_indexer_runtime
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

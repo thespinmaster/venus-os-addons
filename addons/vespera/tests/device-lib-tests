@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_root="$this_path/../src/data/apps/available/vespera"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+
+TEST_ROOT=
+TEST_APP_ROOT=
+TEST_LOG=
+
+stage_device_runtime() {
+  TEST_ROOT="$(vt_make_test_root)"
+  TEST_APP_ROOT="$TEST_ROOT/app/vespera"
+  TEST_LOG="$TEST_ROOT/device.log"
+
+  mkdir -p "$TEST_APP_ROOT/libs" "$TEST_APP_ROOT/scripts" "$TEST_ROOT/dev" "$TEST_ROOT/var/volatile/services" "$TEST_ROOT/service" "$TEST_ROOT/dev/serial-starter"
+
+  cp "$source_root/libs/source-lib" "$TEST_APP_ROOT/libs/source-lib"
+  cp "$source_root/libs/device-lib" "$TEST_APP_ROOT/libs/device-lib"
+  cp "$source_root/libs/json-lib" "$TEST_APP_ROOT/libs/json-lib"
+  chmod +x "$TEST_APP_ROOT/libs/source-lib" "$TEST_APP_ROOT/libs/device-lib" "$TEST_APP_ROOT/libs/json-lib"
+
+  sed -i "s|\"/dev/\$tty\"|\"$TEST_ROOT/dev/\$tty\"|g" "$TEST_APP_ROOT/libs/device-lib"
+  sed -i "s|\"/dev/\${tty}\"|\"$TEST_ROOT/dev/\${tty}\"|g" "$TEST_APP_ROOT/libs/device-lib"
+  sed -i "s|\"/dev/\${sid_or_tty}\"|\"$TEST_ROOT/dev/\${sid_or_tty}\"|g" "$TEST_APP_ROOT/libs/device-lib"
+  sed -i "s|\"/dev/\${tty_or_sid}\"|\"$TEST_ROOT/dev/\${tty_or_sid}\"|g" "$TEST_APP_ROOT/libs/device-lib"
+  sed -i "s|find /var/volatile/services|find $TEST_ROOT/var/volatile/services|g" "$TEST_APP_ROOT/libs/device-lib"
+  sed -i "s|find -L /service|find -L $TEST_ROOT/service|g" "$TEST_APP_ROOT/libs/device-lib"
+  sed -i "s|\"/dev/serial-starter/\${tty}\"|\"$TEST_ROOT/dev/serial-starter/\${tty}\"|g" "$TEST_APP_ROOT/libs/device-lib"
+
+  cat > "$TEST_APP_ROOT/scripts/list-device-bindings" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' abcd
+EOF
+  chmod +x "$TEST_APP_ROOT/scripts/list-device-bindings"
+
+  cat > "$TEST_APP_ROOT/libs/dbus-lib" <<'EOF'
+#!/usr/bin/env bash
+dbus_lib_delete_tree() {
+  printf 'dbus-delete:%s\n' "$1" >> "$TEST_LOG"
+}
+dbus_lib_set_string_value() {
+  printf 'dbus-set:%s|%s\n' "$1" "$2" >> "$TEST_LOG"
+}
+dbus_lib_get_value() {
+  local path="$1"
+  local -n out="$2"
+  if [[ "$path" == '/Settings/Gui/DemoMode' ]]; then
+    out="${DEMO_MODE:-}"
+  else
+    out=""
+  fi
+}
+EOF
+
+  cat > "$TEST_APP_ROOT/libs/service-lib" <<'EOF'
+#!/usr/bin/env bash
+service_lib_start_templated_service() {
+  printf 'start-template:%s|%s\n' "$1" "$2" >> "$TEST_LOG"
+}
+EOF
+
+  cat > "$TEST_APP_ROOT/libs/serial-device-installer-lib" <<'EOF'
+#!/usr/bin/env bash
+DEVICE_SID=
+DEVICE_TTY=
+sdi_remove_service() {
+  printf 'serial-remove:%s\n' "${DEVICE_SID:-}" >> "$TEST_LOG"
+}
+sdi_get_available_devices() {
+  if [[ -n "${1:-}" ]]; then
+    printf '%s\n' "${1##*/}"
+    return 0
+  fi
+  printf '%s\n' ttyUSB0 ttyACM0
+}
+sdi_fill_usb_props() {
+  local tty="$1"
+  local _props="$2"
+  local -n out="$3"
+  out="ID_MODEL=M,ID_VENDOR=V,ID_SERIAL=S-${tty},ID_PATH=P-${tty}"
+}
+sdi_set_device_sid() {
+  local props="$1"
+  if [[ "$props" == *'ttyUSB0'* ]]; then
+    DEVICE_SID='sid-usb0'
+  elif [[ "$props" == *'ttyACM0'* ]]; then
+    DEVICE_SID='sid-acm0'
+  else
+    DEVICE_SID='abcd'
+  fi
+}
+sdi_install() {
+  printf 'serial-install:%s|%s\n' "${DEVICE_TTY:-}" "${DEVICE_SERVICE_NAME:-}" >> "$TEST_LOG"
+}
+sdi_TTY_from_SID() {
+  printf 'sid-to-tty:%s\n' "${DEVICE_SID:-}" >> "$TEST_LOG"
+  DEVICE_TTY='ttyUSB0'
+}
+sdi_service_name_from_tty() {
+  local tty="$1"
+  local -n out="$2"
+  out='demo-service'
+}
+EOF
+
+  touch "$TEST_ROOT/dev/ttyUSB0" "$TEST_ROOT/dev/ttyACM0"
+  mkdir -p "$TEST_ROOT/var/volatile/services/other.ttyUSB0"
+  ln -sf "$TEST_ROOT/var/volatile/services/other.ttyUSB0" "$TEST_ROOT/service/other.ttyUSB0"
+
+  : > "$TEST_LOG"
+}
+
+cleanup_device_runtime() {
+  [[ -n "${TEST_ROOT:-}" ]] && vt_safe_rm_rf "$TEST_ROOT"
+}
+
+load_device_lib() {
+  # shellcheck disable=SC1090
+  source "$TEST_APP_ROOT/libs/device-lib"
+}
+
+test_device_scan_usb_emits_discovered_lines_without_id_path() {
+  stage_device_runtime
+  load_device_lib
+  # shellcheck disable=SC2034
+  DEFAULT_USB_PROPS='ID_MODEL,ID_VENDOR,ID_SERIAL,ID_PATH'
+
+  local output
+  output="$(device_scan_usb)"
+
+  assert_exitcode 0
+  assert_contains $'Device Discovered:\tsid-usb0\tttyUSB0\tID_MODEL=M,ID_VENDOR=V,ID_SERIAL=S-ttyUSB0' "$output"
+  assert_contains $'Device Discovered:\tsid-acm0\tttyACM0\tID_MODEL=M,ID_VENDOR=V,ID_SERIAL=S-ttyACM0' "$output"
+
+  cleanup_device_runtime
+}
+
+test_device_remove_validates_sid_and_calls_cleanup() {
+  stage_device_runtime
+  load_device_lib
+
+  local stderr
+  stderr="$(device_remove '' 2>&1)"
+  assert_exitcode 1
+  assert_contains 'Invalid argument: sid empty' "$stderr"
+
+  device_remove 'sid-demo'
+  assert_exitcode 0
+  assert_file_contains "$TEST_LOG" 'serial-remove:sid-demo'
+  assert_file_contains "$TEST_LOG" 'dbus-delete:/Settings/Devices/sid_sid-demo'
+
+  cleanup_device_runtime
+}
+
+test_stage_device_runtime_rewrites_sid_or_tty_path() {
+  stage_device_runtime
+
+  assert_file_contains "$TEST_APP_ROOT/libs/device-lib" "\"$TEST_ROOT/dev/\${tty_or_sid}\""
+  assert_file_not_contain "$TEST_APP_ROOT/libs/device-lib" '"/dev/${tty_or_sid}"'
+
+  cleanup_device_runtime
+}
+
+test_device_bind_accepts_dev_prefixed_tty_argument() {
+  stage_device_runtime
+
+  load_device_lib
+
+  # shellcheck disable=SC2034
+  DEFAULT_USB_PROPS='ID_MODEL,ID_VENDOR,ID_SERIAL,ID_PATH'
+
+  local output
+
+  output="$(DEMO_MODE=1 device_bind /dev/ttyUSB0 demo-service)"
+
+  assert_exitcode 0
+  assert_contains $'Device Claimed:\tsid-usb0' "$output"
+  assert_file_not_contain "$TEST_LOG" 'sid-to-tty:'
+  assert_file_contains "$TEST_LOG" 'serial-install:ttyUSB0|demo-service'
+  assert_file_contains "$TEST_LOG" 'dbus-set:/Settings/Devices/sid_sid-usb0/UsbProps|ID_MODEL=M,ID_VENDOR=V,ID_SERIAL=S-ttyUSB0,ID_PATH=P-ttyUSB0'
+
+  cleanup_device_runtime
+}
+
+test_device_bind_claims_device_and_updates_dbus_for_tty_argument() {
+  stage_device_runtime
+  load_device_lib
+  # shellcheck disable=SC2034
+  DEFAULT_USB_PROPS='ID_MODEL,ID_VENDOR,ID_SERIAL,ID_PATH'
+
+  local output
+  output="$(DEMO_MODE=1 device_bind ttyUSB0 demo-service)"
+
+  assert_exitcode 0
+  assert_contains $'Device Claimed:\tsid-usb0' "$output"
+  assert_file_not_contain "$TEST_LOG" 'sid-to-tty:'
+  assert_file_contains "$TEST_LOG" 'serial-install:ttyUSB0|demo-service'
+  assert_file_contains "$TEST_LOG" 'dbus-set:/Settings/Devices/sid_sid-usb0/UsbProps|ID_MODEL=M,ID_VENDOR=V,ID_SERIAL=S-ttyUSB0,ID_PATH=P-ttyUSB0'
+  assert_file_contains "$TEST_LOG" 'start-template:ttyUSB0|demo-service'
+
+  cleanup_device_runtime
+}
+
+test_device_bind_resolves_tty_from_sid_argument() {
+  stage_device_runtime
+  load_device_lib
+  # shellcheck disable=SC2034
+  DEFAULT_USB_PROPS='ID_MODEL,ID_VENDOR,ID_SERIAL,ID_PATH'
+
+  local output
+  output="$(DEMO_MODE=1 device_bind sid-usb0 demo-service)"
+
+  assert_exitcode 0
+  assert_contains $'Device Claimed:\tsid-usb0' "$output"
+  assert_file_contains "$TEST_LOG" 'sid-to-tty:sid-usb0'
+  assert_file_contains "$TEST_LOG" 'serial-install:ttyUSB0|demo-service'
+  assert_file_contains "$TEST_LOG" 'dbus-set:/Settings/Devices/sid_sid-usb0/UsbProps|ID_MODEL=M,ID_VENDOR=V,ID_SERIAL=S-ttyUSB0,ID_PATH=P-ttyUSB0'
+
+  cleanup_device_runtime
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

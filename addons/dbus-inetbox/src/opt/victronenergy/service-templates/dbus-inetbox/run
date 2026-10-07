@@ -1,5 +1,0 @@
-#!/bin/sh
-echo "*** starting inetbox ***"
-exec 2>&1
-. /etc/profile.d/profile.sh
-exec /opt/victronenergy/dbus-inetbox/start-inetbox TTY

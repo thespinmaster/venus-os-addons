@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_lib="$this_path/../src/data/apps/available/vespera/libs/lang-lib"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+
+TEST_ROOT=
+TEST_LANG_DIR=
+
+stage_lang_runtime() {
+  TEST_ROOT="$(vt_make_test_root)"
+  TEST_LANG_DIR="$TEST_ROOT/lang"
+  mkdir -p "$TEST_LANG_DIR"
+
+  cat > "$TEST_LANG_DIR/strings-en" <<'EOF'
+LANG_HELLO='Hello %s'
+LANG_DOUBLE='%s %s'
+EOF
+
+  cat > "$TEST_LANG_DIR/strings-fr" <<'EOF'
+LANG_HELLO='Bonjour %s'
+LANG_DOUBLE='%s %s'
+EOF
+}
+
+cleanup_lang_runtime() {
+  [[ -n "${TEST_ROOT:-}" ]] && vt_safe_rm_rf "$TEST_ROOT"
+}
+
+test_lang_lib_load_strings_with_explicit_code_loads_requested_language() {
+  stage_lang_runtime
+
+  local output
+  output="$(bash -c '
+    source "$1" "$2" fr
+    echo_lang "$LANG_HELLO" World
+  ' _ "$source_lib" "$TEST_ROOT")"
+
+  assert_exitcode 0
+  assert_eq 'Bonjour World' "$output"
+
+  cleanup_lang_runtime
+}
+
+test_echo_lang_supports_multiple_format_args() {
+  stage_lang_runtime
+
+  local output
+  output="$(bash -c '
+    source "$1" "$2" en
+    echo_lang "$LANG_DOUBLE" Hello There
+  ' _ "$source_lib" "$TEST_ROOT")"
+
+  assert_exitcode 0
+  assert_eq 'Hello There' "$output"
+
+  cleanup_lang_runtime
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

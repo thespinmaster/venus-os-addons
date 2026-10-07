@@ -43,6 +43,6 @@ SERVICE_TEMPLATES_SOURCE_PATH="$this_path/../src${SERVICE_TEMPLATES_TARGET_PATH}
 rm -rf "$SERVICE_TEMPLATES_TARGET_PATH"
 cp -rf "$SERVICE_TEMPLATES_SOURCE_PATH" "$SERVICE_TEMPLATES_TARGET_PATH"
 
-# $this_path/../src/data/dbus-inetbox/installer "dev-install"
+# $this_path/../src/data/apps/dbus-inetbox/installer "dev-install"
 
 echo "done"

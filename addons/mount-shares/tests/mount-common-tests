@@ -11,11 +11,9 @@ set -o nounset
 
 this_path="$(dirname "${BASH_SOURCE[0]}")"
 
-VENUS_ROOT_DIR="$this_path/output"
-
 . "$this_path/../../../scripts/libs/test-lib"
 . "$this_path/../../../scripts/libs/core-lib"
-. "$this_path/../src/data/mount-shares/mount-common"
+. "$this_path/../src/data/apps/mount-shares/mount-lib"
 
 this_dir_full="$(core_lib_realpath_nosymlinks "${this_path}")"
 output_dir="${this_dir_full}/output"
@@ -50,15 +48,15 @@ stage_get_mount_args() {
 test_mount_prompts_for_name() {
 
   # Arrange
-  mount_common_mount_server() { return 0; }
-  __mount_common___read() { echo "ERROR: __read should not be called" >&3; exit 1; }
+  mount_lib_mount_server() { return 0; }
+  __mount_lib___read() { echo "ERROR: __read should not be called" >&3; exit 1; }
 
   local -a mount_args=()
   read -r -a mount_args <<< "$(stage_get_mount_args)"
   local stdout
 
   # Act
-  stdout=$(mount_common_mount --targetpath "$(stage_get_mount_point_dir)" -- "${mount_args[@]}" 2>&1)
+  stdout=$(mount_lib_mount --targetpath "$(stage_get_mount_point_dir)" -- "${mount_args[@]}" 2>&1)
 
   # Assert
   assert_eq "" "$stdout"
@@ -70,7 +68,7 @@ test_mount_fails_when_mount_args_missing() {
   local stdout
 
   # Act
-  stdout=$(mount_common_mount -tp "$(stage_get_mount_point_dir)" 2>&1)
+  stdout=$(mount_lib_mount -tp "$(stage_get_mount_point_dir)" 2>&1)
 
   # Assert
   assert_exitcode 1
@@ -85,7 +83,7 @@ test_mount_fails_when_targetpath_missing() {
   read -r -a mount_args <<< "$(stage_get_mount_args)"
 
   # Act
-  stdout=$(mount_common_mount -- "${mount_args[@]}" 2>&1)
+  stdout=$(mount_lib_mount -- "${mount_args[@]}" 2>&1)
 
   # Assert
   assert_exitcode 1
@@ -95,7 +93,7 @@ test_mount_fails_when_targetpath_missing() {
 test_mount_succeeds_settings_added_to_mountpoints_conf_file() {
 
   # Arrange
-  mount_common_mount_server() { return 0; }
+  mount_lib_mount_server() { return 0; }
   local args
   args="$(stage_get_mount_args)"
   local -a mount_args=()
@@ -108,7 +106,7 @@ test_mount_succeeds_settings_added_to_mountpoints_conf_file() {
   assert_file_not_exist "$mountpoint_conf_file"
 
   # Act
-  mount_common_mount --targetpath "${target}" -- "${mount_args[@]}" 2>/dev/null
+  mount_lib_mount --targetpath "${target}" -- "${mount_args[@]}" 2>/dev/null
 
   # Assert
   assert_exitcode 0
@@ -119,7 +117,7 @@ test_mount_succeeds_settings_added_to_mountpoints_conf_file() {
 test_mount_succeeds_settings_already_exist_not_added_twice() {
 
   # Arrange
-  mount_common_mount_server() { return 0; }
+  mount_lib_mount_server() { return 0; }
   local args
   args="$(stage_get_mount_args)"
   local -a mount_args=()
@@ -133,7 +131,7 @@ test_mount_succeeds_settings_already_exist_not_added_twice() {
   echo "$expected" > "$mountpoint_conf_file"
 
   # Act
-  mount_common_mount --targetpath "${target}" -- "${mount_args[@]}" 2>/dev/null
+  mount_lib_mount --targetpath "${target}" -- "${mount_args[@]}" 2>/dev/null
 
   # Assert
   assert_exitcode 0
@@ -154,12 +152,12 @@ test_mount_succeeds_mount_server_called_with_all_args() {
   local -a mount_args=()
   read -r -a mount_args <<< "${expected}"
 
-  mount_common_mount_server() {
+  mount_lib_mount_server() {
     echo "$*" >> "$test_log_file"
   }
 
   # Act
-  mount_common_mount --targetpath "$(stage_get_mount_point_dir)" -- "${mount_args[@]}" 2>/dev/null
+  mount_lib_mount --targetpath "$(stage_get_mount_point_dir)" -- "${mount_args[@]}" 2>/dev/null
 
   # Assert
   assert_exitcode 0
@@ -178,7 +176,7 @@ test_mount_server_succeeds_creates_mount_target_folder() {
 
   # Act
   exec 3>&1
-  stdout="$(mount_common_mount_server --targetpath "$mount_point_path" -t cifs "//$(stage_get_server_ip_path)" "$mount_point_path" -o "user=$(stage_get_user_name),pass=$(stage_get_password)" 2>&1)"
+  stdout="$(mount_lib_mount_server --targetpath "$mount_point_path" -t cifs "//$(stage_get_server_ip_path)" "$mount_point_path" -o "user=$(stage_get_user_name),pass=$(stage_get_password)" 2>&1)"
 
   # Assert
   assert_exitcode 0
@@ -194,7 +192,7 @@ test_mount_server_mount_fails_returns_exitcode_from_mount() {
   local stdout
 
   # Act
-  stdout="$(mount_common_mount_server --targetpath "$(stage_get_mount_point_dir)" -t cifs "//$(stage_get_server_ip_path)" "$(stage_get_mount_point_dir)" -o "user=$(stage_get_user_name),pass=$(stage_get_password)" 2>&1)"
+  stdout="$(mount_lib_mount_server --targetpath "$(stage_get_mount_point_dir)" -t cifs "//$(stage_get_server_ip_path)" "$(stage_get_mount_point_dir)" -o "user=$(stage_get_user_name),pass=$(stage_get_password)" 2>&1)"
 
   # Assert
   assert_exitcode $expected_exit_code
@@ -207,7 +205,7 @@ test_mount_all_succeeds_calls_mount_correctly() {
   local test_log_file="${output_dir}/test.log"
   rm -f "$test_log_file"
 
-  mount_common_mount_server() {
+  mount_lib_mount_server() {
     echo "$*" >> "$test_log_file"
   }
 
@@ -223,7 +221,7 @@ test_mount_all_succeeds_calls_mount_correctly() {
   } > "$mountpoint_conf_file"
 
   # Act
-  mount_common_mount_all 2>/dev/null
+  mount_lib_mount_all 2>/dev/null
   sleep 1
 
   # Assert
@@ -237,7 +235,7 @@ test_mount_all_succeeds_calls_mount_correctly() {
   assert_file_contains "$test_log_file" "$args_2"
 }
 
-test_mount_common_wait_on_mount_point_succeeds_when_mount_exists() {
+test_mount_lib_wait_on_mount_point_succeeds_when_mount_exists() {
 
   # Arrange
   mountpoint() {
@@ -248,14 +246,14 @@ test_mount_common_wait_on_mount_point_succeeds_when_mount_exists() {
   local mount_point="/mnt/some_mount_point"
 
   # Act
-  stdout=$(mount_common_wait_on_mount_point "$mount_point" 2>&1)
+  stdout=$(mount_lib_wait_on_mount_point "$mount_point" 2>&1)
 
   # Assert
   assert_exitcode 0
   assert_eq "mountpount available: ${mount_point}" "$stdout"
 }
 
-test_mount_common_wait_on_mount_point_fails_when_mount_times_out() {
+test_mount_lib_wait_on_mount_point_fails_when_mount_times_out() {
 
   # Arrange
   mountpoint() {
@@ -266,14 +264,14 @@ test_mount_common_wait_on_mount_point_fails_when_mount_times_out() {
   local mount_point="/mnt/some_mount_point"
 
   # Act
-  stdout=$(mount_common_wait_on_mount_point "$mount_point" 2 2>&1)
+  stdout=$(mount_lib_wait_on_mount_point "$mount_point" 2 2>&1)
 
   # Assert
   assert_exitcode 1
   assert_eq "mountpount not available: ${mount_point}" "$stdout"
 }
 
-test_mount_common_wait_on_mount_point_quiet_returns_empty_stdout() {
+test_mount_lib_wait_on_mount_point_quiet_returns_empty_stdout() {
 
   # Arrange
   local retval=0
@@ -285,16 +283,16 @@ test_mount_common_wait_on_mount_point_quiet_returns_empty_stdout() {
   local mount_point="/mnt/some_mount_point"
 
   # Act
-  stdout_success=$(mount_common_wait_on_mount_point "$mount_point" --quiet 2>&1)
+  stdout_success=$(mount_lib_wait_on_mount_point "$mount_point" --quiet 2>&1)
   retval=1
-  stdout_fail=$(mount_common_wait_on_mount_point "$mount_point" 1 --quiet 2>&1)
+  stdout_fail=$(mount_lib_wait_on_mount_point "$mount_point" 1 --quiet 2>&1)
 
   # Assert
   assert_eq "" "$stdout_success"
   assert_eq "" "$stdout_fail"
 }
 
-test_mount_common_remove_mount_succeeds_removes_entry_by_target() {
+test_mount_lib_remove_mount_succeeds_removes_entry_by_target() {
 
   # Arrange
   local -i index=1
@@ -318,7 +316,7 @@ test_mount_common_remove_mount_succeeds_removes_entry_by_target() {
   assert_eq 3 "${count_of}"
 
   # Act
-  mount_common_remove_mount "${targets[1]}"
+  mount_lib_remove_mount "${targets[1]}"
 
   # Assert
   index=0

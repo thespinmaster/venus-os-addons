@@ -9,7 +9,7 @@ import QtQuick.Controls 2.12
 
 SwipeViewPage {
 	id: root
-	readonly property bool pluginReady: !GuiPluginLoader.busy && GuiPluginLoader.plugin("OpkgManager").name === "OpkgManager"
+	readonly property bool pluginReady: !GuiPluginLoader.busy && GuiPluginLoader.plugin("Vespera").name === "Vespera"
 
 	//% "Inetbox"
 	title: "Motorhome" // qsTrId("nav_boat")

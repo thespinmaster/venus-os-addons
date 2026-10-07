@@ -1,14 +1,14 @@
 #!/bin/bash
 
 set -o nounset
- 
+
 declare this_path; this_path="$(dirname "${BASH_SOURCE[0]}")"
- 
+
 QML_TARGET_PATH="/opt/victronenergy/gui/qml"
 QML_SOURCE_PATH="$this_path/../src${QML_TARGET_PATH}"
- 
+
 [[ -d "${QML_TARGET_PATH}" ]] || { echo "Wrong Server! (path not found ${QML_TARGET_PATH})"; exit 1; }
- 
+
 QML_ICONS_TARGET_PATH="/opt/victronenergy/themes/ccgx/icons"
 QML_ICONS_SOURCE_PATH="$this_path/../src${QML_ICONS_TARGET_PATH}"
 
@@ -32,6 +32,6 @@ for source_file in "$QML_ICONS_SOURCE_PATH"/*; do
 done
 
 echo "doing dev-install"
-$this_path/../src/data/dbus-ne-shunt/installer "dev-install"
+$this_path/../src/data/apps/dbus-ne-shunt/installer "dev-install"
 
 echo "done"

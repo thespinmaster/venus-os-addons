@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+
+__vespera_path="$(dirname "${BASH_SOURCE[0]}")"
+__vespera_path="$(cd "${__vespera_path}/.." && pwd)"
+
+# shellcheck source="../conf-default/vespera.conf"
+source "$__vespera_path/conf/vespera.conf"
+VESPERA_DATA_DIR="${VESPERA_ROOT:-}${VESPERA_DATA_DIR}"
+VESPERA_VENUS_VERSION_FILE="${VESPERA_ROOT:-}${VESPERA_VENUS_VERSION_FILE}"
+# shellcheck source="../libs/opkg-lib"
+source "$__vespera_path/libs/opkg-lib"
+
+__vespera_overlay() { "${VESPERA_DATA_DIR}/info/vespera.overlay-lib" "$@"; }
+
+__start_all_services() {
+	for app in $(opkg_lib_list_packages "all"); do
+		[[ -L "${VESPERA_ROOT:-}/data/apps/enabled/$app" ]] || continue
+		local dbus_name; dbus_name=$(cat "$VESPERA_DATA_DIR/info/${app}.${VESPERA_DBUS_NAME}" 2>/dev/null;)
+		"$__vespera_path/scripts/start-app-services" "$app" "$dbus_name"
+	done
+}
+
+__reconcile_overlays() {
+	local reconcile_dir owned_files whiteouts app
+
+	reconcile_dir="$(mktemp -d)" || return 1
+	owned_files="$reconcile_dir/files"
+	whiteouts="$reconcile_dir/whiteouts"
+
+	: > "$owned_files"
+	: > "$whiteouts"
+
+	for app in $(opkg_lib_list_packages all); do
+		[[ -f "${VESPERA_DATA_DIR}/info/$app.list" ]] &&
+			awk '{ print $1 }' "${VESPERA_DATA_DIR}/info/$app.list" >> "$owned_files"
+
+		[[ -f "${VESPERA_DATA_DIR}/info/$app.$VESPERA_WHITEOUTS_FILE" ]] &&
+			awk '{
+				sub(/[[:space:]]*#.*$/, "", $0)
+				gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+				if ($0 != "") print
+			}' "${VESPERA_DATA_DIR}/info/$app.$VESPERA_WHITEOUTS_FILE" >> "$whiteouts"
+	done
+
+	__vespera_overlay overlay-reconcile "$owned_files" "$whiteouts"
+
+	rm -rf "$reconcile_dir"
+}
+
+__firmware_changed() {
+
+	echo "Firmware changed, configuring packages"
+
+	# shellcheck source=../libs/vespera-lib
+	source "$__vespera_path/libs/vespera-lib"
+
+	opkg_lib_expand_root_fs
+
+	cp "$VESPERA_VENUS_VERSION_FILE" "$VESPERA_VENUS_VERSION_FILE.old"
+	cp "${VESPERA_ROOT:-}/opt/victronenergy/version" "$VESPERA_VENUS_VERSION_FILE"
+
+	echo "Reconciling overlays"
+	__reconcile_overlays
+	__vespera_overlay overlay-mount
+
+	__vespera_lib_initialize
+	: > "${VESPERA_WORKING_DIR}/${VESPERA_VENUS_FIRMWARE_CHANGED_FILE}"
+
+	local ordered_pkgs; ordered_pkgs="$(opkg_lib_get_configure_order)"
+
+	opkg_ensure_combined_conf_file
+
+	echo "Configuring all packages"
+	opkg_lib_configure_packages "$ordered_pkgs"
+
+	echo "Starting all services"
+	__start_all_services
+
+	__vespera_lib_cleanup
+
+	echo "Executing all rcS.local startup scripts for enabled apps"
+	"$__vespera_path/scripts/execute-startup-scripts" rcS.local
+}
+
+declare log_file="${VESPERA_ROOT:-}/var/log/vespera/rcS-local.log"
+mkdir -p "$(dirname "$log_file")"
+exec > "$log_file" 2>&1 # note file overwrite for each reboot
+
+if [[ ! -f "$VESPERA_VENUS_VERSION_FILE" ]]; then
+	cp "${VESPERA_ROOT:-}/opt/victronenergy/version" "$VESPERA_VENUS_VERSION_FILE"
+	exit 0
+fi
+
+if cmp -s "$VESPERA_VENUS_VERSION_FILE" "${VESPERA_ROOT:-}/opt/victronenergy/version"; then
+	echo "Firmware versions match; mounting"
+	__vespera_overlay overlay-mount
+	__start_all_services
+	"$__vespera_path/scripts/execute-startup-scripts" rcS.local
+	exit 0
+fi
+
+__firmware_changed

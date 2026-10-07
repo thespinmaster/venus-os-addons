@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/../src/data/apps/available/vespera/libs/json-lib"
+
+test_json_lib_ary_add_unique_items_appends_only_new_non_blank_items() {
+  local output
+  output="$(json_lib_ary_add_unique_items '["a","b"]' 'b' 'c' '' 'd')"
+
+  assert_exitcode 0
+  assert_eq '["a","b","c","d"]' "$output"
+}
+
+test_json_lib_ary_add_unique_items_treats_invalid_input_as_empty_array() {
+  local output
+  output="$(json_lib_ary_add_unique_items 'not-json' 'x' 'y')"
+
+  assert_exitcode 0
+  assert_eq '["x","y"]' "$output"
+}
+
+test_json_lib_ary_remove_items_removes_all_requested_values() {
+  local output
+  output="$(json_lib_ary_remove_items '["a","b","a","c"]' 'a' 'c')"
+
+  assert_exitcode 0
+  assert_eq '["b"]' "$output"
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

@@ -1,12 +1,29 @@
 #!/usr/bin/env bash
 
 set -o nounset
- 
+
 EXIT_ON_FAILED_TEST=
 TEST_INDENT=
 TEST_RUNNER_ERROR_COUNT=0
 TEST_RUNNER_SUCCESS_COUNT=0
 TEST_RUNNER_SILENT=
+
+__test_file_link_target() {
+  local file="${1:-}"
+  local line="${2:-1}"
+  local column="${3:-1}"
+
+  printf '%s:%s:%s' "$file" "$line" "$column"
+}
+
+__format_colon_label() {
+  local value="${1:-}"
+  [[ "$value" == *":"* ]] || { printf '%s' "$value"; return 0; }
+
+  local prefix="${value%%:*}"
+  local suffix="${value#*:}"
+  printf '%s%s%s%s' $'\033[31;1m' "${prefix}:" $'\033[0m' "${suffix}"
+}
 
 __assert_lib_pass_or_fail() {
 
@@ -14,9 +31,9 @@ __assert_lib_pass_or_fail() {
   # comment is always the second
   local res=$1
   local comment="$2"
- 
+
   shift 2 # remove result & comment
- 
+
   if [[ -n "${comment}" ]]; then
     [[ $# -gt 0 ]] && comment="${comment//#1/\'${1}\'}"
     [[ $# -gt 1 ]] && comment="${comment//#2/\'${2}\'}"
@@ -28,7 +45,7 @@ __assert_lib_pass_or_fail() {
       fi
       comment="${comment:2:${#comment}}"
     fi
-  fi  
+  fi
 
   if [[ $res == true ]]; then
     (( TEST_RUNNER_SUCCESS_COUNT+=1 ))
@@ -43,400 +60,42 @@ __assert_lib_pass_or_fail() {
     ((TEST_RUNNER_ERROR_COUNT+=1))
 
     local lineNo="${BASH_LINENO[1]}"
-    # u274c\ufe0f cross
-    #echo -e "${TEST_INDENT}\033[31;1mFAILED (line:$lineNo)\033[00m: \e[9m$comment\e[0m"
-    
-    # (( ! TEST_RUNNER_SILENT )) && {
-      local align_space=
-      printf '%s\033[31;1m\u274c\ufe0f (line:%s)\033[00m: %s\e[0m\n' "${TEST_INDENT}" "${lineNo}" "${comment}"
-      for (( i=1; i <= "$#"; i++ )); do 
-        #((i==2)) && align_space=" "
-        printf '%s%s%q\n' "${TEST_INDENT}" "${align_space}" "${!i}"
-      done
-    #}
+    local fileName="${BASH_SOURCE[2]:-${BASH_SOURCE[1]:-${BASH_SOURCE[0]}}}"
+
+		printf "%s\n" "$(__format_colon_label "${comment}")"
+		printf "%s\n" "$(__format_colon_label "${TEST_INDENT}Assertion failed: ${fileName}, ${lineNo}")"
+
+		for (( i=1; i <= "$#"; i++ )); do
+			local arg_value="${!i}"
+			local formatted_arg="$arg_value"
+			if [[ "$arg_value" == *":"* ]]; then
+				formatted_arg="$(__format_colon_label "$arg_value")"
+			fi
+			#printf '%s%s%q\n' "${TEST_INDENT}  " "${!i}"
+			printf '%s%s\n' "${TEST_INDENT}  " "${formatted_arg}"
+		done
+
     if [[ $EXIT_ON_FAILED_TEST  ]]; then
       exit 255
     fi
   fi
   # some true results are formed from fails (file not exist etc..)
   # so make sure we an exit code based on the result
-  #[[ $res ]] && return 0 
+  #[[ $res ]] && return 0
   return 0
 }
- 
+
 __set_comment() {
-  local -n _comment="$1" 
+  local -n _comment="$1"
   if [[ -z "$_comment" || "$_comment" == "--" ]]; then
     _comment+="$2"
   fi
 }
 
-###################################
-# Asserts if a file exists
-# Arguments:
-#   $1 file name
-#   $2 optional - comment; default; "File exists"
-#   $3 optional - retry count; default 1
-###################################
-assert_file_exists() {
-  local res=false
-  local comment="${2:-}"
-  local -i retry_count="${3:-1}"
-
-  __set_comment comment "File exists"
-  while (( retry_count > 0)); do
-    [[ -f "${1}" ]] && { res=true; break; }
-    (( retry_count-=1 ))
-    sleep 0.25
-  done
-
-  __assert_lib_pass_or_fail $res "$comment" "file:$1"
-
-}
-
-###################################
-# Asserts if a file does not exist
-# Arguments:
-#   $1 file name
-#   $2 comment
-###################################
-assert_file_not_exist() {
-  local res=false
-  local comment="${2:-}"
-  __set_comment comment "File does not exist"
-  [[ -f "${1}" ]] || res=true
-  __assert_lib_pass_or_fail $res "$comment" "file:$1"
-}
-
-###################################
-# Asserts if a directory exists
-# Arguments:
-#   $1 directory path
-#   $2 comment
-###################################
-assert_dir_exists() {
-  local res=false
-  local comment="${2:-}"
-  __set_comment comment "Directory exists"
-  [[ -d "${1}" ]] && res=true
-  __assert_lib_pass_or_fail $res "$comment" "path:$1"
-}
-
-###################################
-# Asserts if a directory does not exist
-# Arguments:
-#   $1 directory path
-#   $2 comment
-###################################
-assert_dir_not_exist() {
-  local res=false
-  local comment="${2:-}"
-  __set_comment comment "Directory does not exist"
-  [[ -d "${1}" ]] || res=true
-  __assert_lib_pass_or_fail $res "$comment" "path:$1"
-}
-
-###################################
-# Asserts if 2 values are equal
-# Arguments:
-#   $1 value1
-#   $2 value2
-#   $3 comment
-###################################
-assert_eq() { 
-  local res=false
-  local comment="${3:-}"
-  __set_comment comment "Values are equal"
-  [[ "${1:-}" == "${2:-}" ]] && res=true
-  __assert_lib_pass_or_fail $res "$comment" "value 1:$1" "value 2:$2"
- }
- 
- ###################################
-# Asserts if value1 is greater than value 2
-# Arguments:
-#   $1 value1
-#   $2 value1
-#   $3 comment
-###################################
-assert_gt() { 
-  local res=false
-  local comment="${3:-}"
-  __set_comment comment "Value1 is greater than Value2"
-  (( "${1}" > "${2}" )) && res=true
-  __assert_lib_pass_or_fail $res "$comment" "value 1:$1" "value 2:$2"
- }
-
-###################################
-# Asserts if value1 is less than value 2
-# Arguments:
-#   $1 value1
-#   $2 value1
-#   $3 comment
-###################################
-assert_lt() { 
-  local res=false
-  local comment="${3:-}"
-  __set_comment comment "Value1 is less than Value2"
-  (( "${1}" < "${2}" )) && res=true
-  __assert_lib_pass_or_fail $res "$comment" "value 1:$1" "value 2:$2"
- }
-
-###################################
-# Asserts if value1 is between value 2 and value 3
-# Arguments:
-#   $1 value1
-#   $2 value2
-#   $3 value3
-#   $4 comment
-###################################
-assert_between() { 
-
-  if (( "${2}" >= "${3}"  )); then
-    echo "value1 must be greater than value 2" >&2; 
-    return 0
-  fi
- 
-  local res=false
-  local comment="${4:-}"
-  __set_comment comment "Value1 is less than Value2"
-  (( "${1}" >= "${2}" )) && (( "${1}" <= "${3}" )) && res=true
-  __assert_lib_pass_or_fail $res "$comment" "value 1:$1" "value 2:$2" "value 3:$3"
- }
-
-###################################
-# Asserts if 2 values are not equal
-# Arguments:
-#   $1 value1
-#   $2 value2
-#   $3 comment
-###################################
-assert_not_eq() {
-  local res=false
-  local comment="${3:-}"
-  __set_comment comment "Values are not equal"
-  [[ "${1}" != "${2}" ]] && res=true
-  __assert_lib_pass_or_fail $res "$comment" "value 1:$1" "value 2:$2"
- }
- 
-###################################
-# Asserts if the value is empty
-# Arguments:
-#   $1 value
-#   $2 comment
-###################################
-assert_empty() {
-  local res=false
-  local comment="${2:-}"
-  __set_comment comment "Value is empty"
-  [[ -z "${1:-}" ]] && res=true
-  __assert_lib_pass_or_fail $res "$comment" "value:${1:-}"
-}
-
-###################################
-# Asserts if the value is empty
-# Arguments:
-#   $1 value
-#   $2 comment
-###################################
-assert_not_empty() {
-  local res=false
-  local comment="${2:-}"
-  __set_comment comment "Value is empty"
-  [[ -n "${1:-}" ]] && res=true
-  __assert_lib_pass_or_fail $res "$comment" "value:${1:-}"
-}
+TEST_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$TEST_LIB_DIR/test-lib-assert"
 
 
-###################################
-# Asserts if two files are equal (using cmp)
-# Arguments:
-#   $1 file 1
-#   $2 file 2
-#   $3 comment
-###################################
-assert_files_eq() {
-  local res=false
-  local file1="${1}"
-  local file2="${2}"
-  local comment="${3:-}"
-  __set_comment comment "Files are equal"
-  cmp --quiet "${file1}" "${file2}" && res=true
-  __assert_lib_pass_or_fail $res "$comment" "file1:${file1}" "file2:${file2}"
-}
-
-###################################
-# Asserts if a variable exists (not unset)
-# Arguments:
-#   $1 variable name
-#   $2 comment
-###################################
-assert_var_exists() {
-  local res=false
-  local comment="${2:-}"
-  [[ -v $1 ]] && res=true
-  __set_comment comment "Variable exists; ${1}"
-  __assert_lib_pass_or_fail $res "$comment" "${1}"
-}
-
-###################################
-# Asserts if a variable does not exist (not unset)
-# Arguments:
-#   $1 variable name
-#   $2 comment
-###################################
-assert_var_not_exist() {
-  local res=false
-  local comment="${2:-}"
-  [[ ! -v $1 ]] && res=true # normalize the results to true/false
-  __set_comment comment "Variable exists; ${1}"
-  __assert_lib_pass_or_fail $res "$comment" "${1}"
-}
-
-###################################
-# Logs the result of an external test
-# Arguments:
-#   $1 result
-#   $2 comment
-#   $3 any args
-###################################
-assert_result() {
-  local res=false
-  local comment="${2:-}"
-  [[ ${1} == true ||  ${1} == 0 ]] && res=true # normalize the results to true/false
-  __set_comment comment "Test Result=${1}"
-  shift 2 # for args
-  __assert_lib_pass_or_fail $res "$comment" "${@}"
-}
-
-###################################
-# Asserts if the value is not empty
-# Arguments:
-#   $1 value
-#   $2 comment
-###################################
-assert_not_empty() { 
-  local res=false
-  local comment="${2:-}"
-  __set_comment comment "Value is not empty"
-  [[ -n "${1}" ]] && res=true
-  __assert_lib_pass_or_fail $res "$comment" "value:$1"
- }
- 
-###################################
-# Asserts if the exit code equals
-# Arguments:
-#   $1 - required; exit code to match
-#   $2 - optional; comment
-# this method must be placed directly
-# after the command to check as it
-# uses "$?"
-###################################
-assert_exitcode() {
-  exitcode=$?
-  local res=false
-  local comment="${2:-}"
-  local expected=${1:-0}
-  __set_comment comment "Exit code is valid"
-  (( exitcode == expected )) && res=true
-  __assert_lib_pass_or_fail $res "$comment" "expected:$expected" "recieved:$exitcode"
-}
-
-###################################
-# Asserts if the exit code does not equal
-# Arguments:
-#   $1 - required; exit code to not match
-#   $2 - optional; comment
-# this method must be placed directly
-# after the command to check as it
-# uses "$?"
-###################################
-assert_exitcode_not() {
-  exitcode=$?
-  local res=false
-  local comment="${2:-}"
-  local arg1 arg2
-  #if [[ ! $comment ]]; then
-    arg1="not expecting:$1"; arg2="recieved:$exitcode"
-  #else
-  #  arg1="$1"; arg2="$exitcode"
-  #fi
-  __set_comment comment "Exit code is valid" 
-  (( exitcode != ${1} )) && res=true
-  __assert_lib_pass_or_fail $res "$comment" "$arg1" "$arg2"
-}
-
-###################################
-# Asserts if arg2 contains the string in arg1
-# Arguments:
-#   $1 - required; the string value to match
-#   $1 - required; the string to look for the match in
-#   $3 - optional comment
-###################################
-assert_contains() {
-  local res=false
-  local match="${1}"
-  local source="${2:-}"
-  local comment="${3:-}"
-  __set_comment comment "Contains"
-  # don't try to match if match string is empty
- 
-  [[ -n "${match}" ]] && [[ "$source" == *"${match}"* ]] && res=true
-  __assert_lib_pass_or_fail $res "$comment" "arg1:$source" "arg2:$match"
-}
-###################################
-# Asserts if arg2 does not contain the string in arg1
-# Arguments:
-#   $1 - required; the string value to match
-#   $1 - required; the string to look for the match in
-#   $3 - optional comment
-###################################
-assert_not_contain() {
-   local res=false
-  local match="${1}"
-  local source="${2:-}"
-  local comment="${3:-}"
-  __set_comment comment "Contains"
-  # don't try to match if match string is empty
- 
-  [[ -n "${match}" ]] && [[ "$source" == *"${match}"* ]] || res=true
-  __assert_lib_pass_or_fail $res "$comment" "arg1:$source" "arg2:$match"
-}
-###################################
-# Asserts if a file contains a string
-# Arguments:
-#   $1 - required; the file to check
-#   $2 - required; the string value to find
-#   $3 - optional comment
-###################################
-assert_file_contains() {
-  local res=false
-  local file="${1}"
-  local match="${2}"
-  local comment="${3:-}"
-  __set_comment comment "File contains"
-  # don't try to match if match string is empty
-  [[ -n "${match}" ]] && [[ "$(<"${file}")" == *"${match}"* ]] && res=true
-  __assert_lib_pass_or_fail $res "$comment" "file:$file" "match:$match"
-}
-
-###################################
-# Asserts if a file does not contain a string
-# Arguments:
-#   $1 the file to check
-#   $2 the string value to find
-#   $3 comment
-###################################
-assert_file_not_contain() { 
-  local res=false
-  local file="${1}"
-  local match="${2}"
-  local comment="${3:-}"
-  __set_comment comment "File does not contain"
-  # don't try to match if match string is empty
-  [[ -n "${match}" ]] && [[ "$(<"${file}")" == *"${match}"* ]] || res=true
-  __assert_lib_pass_or_fail $res "$comment" "file:$file" "match:$match"
-}
- 
 ###################################
 # Runs an array of test functions
 # Arguments:
@@ -451,40 +110,44 @@ test_runner() {
 
   local -n _tests="$1"
   local -n _comments="$2"
+  local -n _lines="$3"
+  local test_file="${4:-}"
   local -i i=0
   local error_count=0
   local success_count=0
-  local tmpFile="/tmp/test-runner-${BASHPID}"  
+  local tmpFile="/tmp/test-runner-${BASHPID}"
   local -i res=
   local saved_TEST_RUNNER_SILENT=$TEST_RUNNER_SILENT
   local style=
   local output=
   local icon=
-  
+
   if (( summary )); then
     TEST_RUNNER_SILENT=1
   fi
 
   # shellcheck disable=SC2329,SC2317
-  cleanup() { 
+  cleanup() {
     TEST_RUNNER_SILENT=${saved_TEST_RUNNER_SILENT:-}
     rm -f "/tmp/test-runner-${BASHPID}"
   }
-  
+
   set_print_style() {
+
     if (( res != 0 )) && (( res != 255 )); then
       output="---Syntax error---"$'\n'"$output"$'\n'
       style='\033[1;35m'
       icon=
     elif (( TEST_RUNNER_ERROR_COUNT > 0 )); then
       style='\033[31;1m'
-      icon='\u274c\ufe0f'
+			icon=$'\u274c\ufe0f'
+			#icon='\u2716'
     elif (( TEST_RUNNER_SUCCESS_COUNT > 0 )); then
       style='\033[32m'
-      icon='\u2705\ufe0f'
+			icon=$'\u2705\ufe0f'
     elif (( res == 0 )); then
       style='\033[32m'
-      icon='\u2705\ufe0f'
+			icon=$'\u2705\ufe0f'
     else
       style='\033[1;37m'
       icon=
@@ -493,8 +156,10 @@ test_runner() {
 
   # shellcheck disable=SC2329,SC2317
   exit_test() {
-    echo -e "TEST_RUNNER_SUCCESS_COUNT=$TEST_RUNNER_SUCCESS_COUNT\
-    TEST_RUNNER_ERROR_COUNT=$TEST_RUNNER_ERROR_COUNT\n" >"$tmpFile"
+    rm -f "$tmpFile"
+    printf '%s\n%s\n' \
+      "TEST_RUNNER_SUCCESS_COUNT=${TEST_RUNNER_SUCCESS_COUNT}" \
+      "TEST_RUNNER_ERROR_COUNT=${TEST_RUNNER_ERROR_COUNT}" >"$tmpFile"
     [[ $(type -t post_test_runner) == function ]] && {
       post_test_runner; }
   }
@@ -502,10 +167,15 @@ test_runner() {
   box_string() {
     local string="$1"
     local -i stringLen=${#string}
-    (( stringLen += 2 )) # +2 for spaces
-    [[ -n $icon ]] && (( stringLen += 2 ))
-    printf -v "horz" '%.s─' $(seq 1 $stringLen) # create horizontal line in var horz
-    printf "${style}"'\u250c%s\u2510\n\u2502'"${icon}"' %s \u2502\n\u2514%s\u2518\n\e[m' "$horz" "$string" $horz
+    (( stringLen += 2 )) # +2 for spaces around string
+    [[ -n $icon ]] && (( stringLen += 2 )) # +1 icon +1 space
+    # printf -v "horz" '%.s─' $(seq 1 $stringLen) # create horizontal line in var horz
+    # printf "${style}"'\u250c%s\u2510\n\u2502'"${icon}"' %s \u2502\n\u2514%s\u2518\n\e[m' "$horz" "$string" $horz
+
+		printf -v horz '%*s' "$stringLen" ''
+    horz=${horz// /─}
+
+    printf "${style}"'\u250c%s\u2510\n\u2502'"${icon}"' %s \u2502\n\u2514%s\u2518\n\e[m' "$horz" "$string" "$horz"
   }
 
   trap 'cleanup' EXIT
@@ -513,43 +183,50 @@ test_runner() {
   for i in "${!_tests[@]}"; do
     TEST_RUNNER_ERROR_COUNT=0
     TEST_RUNNER_SUCCESS_COUNT=0
- 
+
     output=$(
       trap "exit_test" EXIT
       [[ $(type -t pre_test_runner) == function ]] && {
         pre_test_runner; }
-        
-      ${_tests[$i]} 2>&1 
-    ) 
+
+      ${_tests[$i]} 2>&1
+    )
     res=$?
-     
+
     # shellcheck disable=SC1090
     if [[ -f "$tmpFile" ]]; then
-       
+
       source "$tmpFile"
       success_count=$(( success_count+=TEST_RUNNER_SUCCESS_COUNT ))
       error_count=$(( error_count+=TEST_RUNNER_ERROR_COUNT ))
 
       rm -f "$tmpFile"
     fi
-  
+
     set_print_style
     local comment=;comment="${_comments[$i]}"
     if [[ -z "${comment}" ]]; then
       comment="${_tests[$i]//_/ }"
     fi
 
-    printf "${style}${icon}"' %s) '\''%s'\''\n\e[0m' "$(( i+1 ))" "${comment}" 
-    
+    local label_text="$(( i+1 ))) '${comment}'"
+    local label_target=
+    [[ -n "$test_file" ]] && label_target="$(__test_file_link_target "$test_file" "${_lines[$i]:-1}" 1)"
+
+    printf '%b%s %s' "${style}" "${icon}" "${label_text}"
+    [[ -n "$label_target" ]] && printf ' %b%s' $'\e[2m' "$label_target"
+    printf '%b\n' $'\e[0m'
+
     [[ -n "$output" ]] && printf "${style}"'%s\n\e[0m' "$output"
 
     if (( res != 0 )) && [[ $EXIT_ON_FAILED_TEST  ]]; then
       break
     fi
   done
- 
-  box_string "Tests completed: ${success_count} succeeded; ${error_count} failed"
-   
+
+  local total_count=$((success_count + error_count))
+  box_string "Tests completed: ${total_count} total; ${success_count} succeeded; ${error_count} failed"
+
   TEST_RUNNER_ERROR_COUNT=0
   TEST_RUNNER_SUCCESS_COUNT=0
 
@@ -564,10 +241,10 @@ test_runner() {
 # from a file and then executes each
 # function in a separate process
 # Arguments:
-#   $1 - optional; pass --summary, used to display 
-#      a summary of the tests rather than showing 
+#   $1 - optional; pass --summary, used to display
+#      a summary of the tests rather than showing
 #      each result
-#   $1 - required; The file containing the 
+#   $1 - required; The file containing the
 #        tests to run
 #   $2 - optional; Filters the name of the test
 #        The default filter is "^assert_*"
@@ -578,33 +255,34 @@ test_runner_all() {
 
   local -a summary=()
   [[ "$1" == "--summary" ]] && { shift; summary=(--summary); }
- 
+
   local file="${1:-${BASH_SOURCE[1]}}"
   local filter="${2:-^test_.*}"
- 
-  [[ -f "$file" ]] || { echo "file not found: $file" >&2; return 1; }
- 
-  # shellcheck disable=SC2034
-  local -a tests comments
- 
-  __get_public_functions "$file" "$filter" tests comments
 
-  #echo "testrunner test func count: ${#tests[@]}"  
-  #for i in "${!tests[@]}"; do   
+  [[ -f "$file" ]] || { echo "file not found: $file" >&2; return 1; }
+  file="$(cd "$(dirname "$file")" && pwd)/$(basename "$file")"
+
+  # shellcheck disable=SC2034
+  local -a tests comments lines
+
+  __get_public_functions "$file" "$filter" tests comments lines
+
+  #echo "testrunner test func count: ${#tests[@]}"
+  #for i in "${!tests[@]}"; do
   #  echo "testrunner test func: ${tests[i]}"
   #done
   #tests=("test1" "test2")
   #comments=("comment1" "comment2")
-  test_runner "${summary[@]}" tests comments 
- 
+  test_runner "${summary[@]}" tests comments lines "$file"
+
 }
 
 ###################################
-# test runner for a complete set of 
+# test runner for a complete set of
 # tests in a file
 # Arguments:
-#   $1 - optional; pass --summary, used to display 
-#      a summary of the tests rather than showing 
+#   $1 - optional; pass --summary, used to display
+#      a summary of the tests rather than showing
 #      each result
 #   $1 - required The file to load using the source command
 #   $2 - optional bash regx filter used filter the
@@ -614,29 +292,101 @@ test_runner_all() {
 # separate process before calling
 # test_runner_all to run all the tests in the file.
 ###################################
- 
+
 test_runner_on_source_file() {
- 
+
   (
       local summary=()
       [[ "${1:-}" == "--summary" ]] && { shift; summary=("--summary"); }
       local src="${1:-${BASH_SOURCE[1]}}"
       local filter="${2:-}"
- 
+      local src_display="$src"
+
+    if [[ -f "$src" ]]; then
+      src_display="$(cd "$(dirname "$src")" && pwd)/$(basename "$src")"
+    fi
+
     if head -n 10 "$src" | grep -iq "# test-runner-ignore"; then
       echo "file: $1"
       echo "test-runner:file ignored: file contains # test-runner-ignore tag" >&2
       return 0;
     fi
- 
+
     #shellcheck disable=SC1090
     source "$src"
-    
-    printf '\e[48;5;25m\n%s\n\e[0m\e[K' "${src##*/}" #"$spaces"
+
+    printf '\n\e[48;5;25m%s\e[K\e[0m\n' "$src_display"
 
     test_runner_all "${summary[@]}" "${src}" "${filter}"
- 
+
   )
+}
+
+__parse_test_summary_totals() {
+  local output="$1"
+  local summary_line=""
+
+  summary_line="$(printf '%s\n' "$output" | sed -n 's/.*Tests completed: \([0-9][0-9]*\) total; \([0-9][0-9]*\) succeeded; \([0-9][0-9]*\) failed.*/\1 \2 \3/p' | tail -n 1)"
+  printf '%s' "$summary_line"
+}
+
+test_runner_on_source_files() {
+  local show_totals=0
+  local summary_mode=0
+  local -a source_files=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --summary)
+        summary_mode=1;;
+      --show-totals)
+        show_totals=1;;
+      --)
+        shift
+        source_files+=("$@")
+        break;;
+      *)
+        source_files+=("$1");;
+    esac
+    shift
+  done
+
+  local total_tests=0
+  local total_success=0
+  local total_failed=0
+  local output_file
+  local output
+  local file_total=0
+  local file_success=0
+  local file_failed=0
+  local test_file
+  local -a runner_args=()
+
+  for test_file in "${source_files[@]}"; do
+    runner_args=()
+    (( summary_mode )) && runner_args+=(--summary)
+    runner_args+=("$test_file")
+
+    if (( show_totals )); then
+      output_file="$(mktemp)"
+      test_runner_on_source_file "${runner_args[@]}" >"$output_file" 2>&1
+      output="$(<"$output_file")"
+      rm -f "$output_file"
+
+      printf '%s\n' "$output"
+
+      read -r file_total file_success file_failed < <(__parse_test_summary_totals "$output")
+      total_tests=$((total_tests + file_total))
+      total_success=$((total_success + file_success))
+      total_failed=$((total_failed + file_failed))
+    else
+      test_runner_on_source_file "${runner_args[@]}"
+    fi
+  done
+
+  if (( show_totals )); then
+    printf 'All tests completed: %s total; %s succeeded; %s failed\n' "$total_tests" "$total_success" "$total_failed"
+  fi
 }
 
 __get_public_functions() {
@@ -644,16 +394,20 @@ __get_public_functions() {
   local filter="$2"
   local -n _names="$3"
   local -n _comments="$4"
+  local -n _lines="$5"
 
   _names=()
   _comments=()
+  _lines=()
 
   [[ -f "$file" ]] || return 1
 
   local last_comment=""
-  local fn="" pending_func=""
+  local fn="" pending_func="" pending_line=""
+  local -i line_no=0
 
   while IFS= read -r line; do
+    (( line_no += 1 ))
     # Capture single comment line
     if [[ "$line" =~ ^[[:space:]]*#[[:space:]]*(.*)$ ]]; then
       last_comment="${BASH_REMATCH[1]}"
@@ -661,42 +415,46 @@ __get_public_functions() {
     fi
 
     # Reset comment on blank or non-comment, non-function line
-  
+
       # Match function definitions
     if [[ -n $pending_func ]]; then
       if [[ $line =~ ^[[:space:]]*\{ ]]; then
         fn="$pending_func"
+        line_no=$pending_line
         pending_func=""
+        pending_line=""
       else
         continue
       fi
-    else 
+    else
       [[ "$line" =~ ^[[:space:]]*$ ]] && { last_comment=""; continue; }
       [[ ! "$line" =~ ^[[:space:]]*(function[[:space:]]+)?[a-zA-Z_] ]] && last_comment=""
 
       if [[ "$line" =~ ^[[:space:]]*(function[[:space:]]+)?([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*(\(\))?[[:space:]]*\{ ]]; then
         fn="${BASH_REMATCH[2]}"
 
-      elif [[ $line =~ ^[[:space:]]*(function[[:space:]]+)?([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*(\(\))?[[:space:]]*$ ]]; then
-        pending_func="${BASH_REMATCH[1]}"
+      elif [[ $line =~ ^[[:space:]]*((function[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]*))|(([a-zA-Z_][a-zA-Z0-9_]*)[[:space:]]*\(\)))[[:space:]]*$ ]]; then
+        pending_func="${BASH_REMATCH[4]:-${BASH_REMATCH[6]}}"
+        pending_line=$line_no
       fi
     fi
 
     if [[ -n $fn ]]; then
       local _fn="$fn"
+      local _line=$line_no
       fn=""
       # Skip private functions
       [[ "$_fn" == _* ]] && last_comment="" && continue
 
       # Optional filter
-      
+
       [[ -n "$filter" && ! "$_fn" =~ $filter ]] && last_comment="" && continue
-  
+
       _names+=("$_fn")
       _comments+=("$last_comment")
+      _lines+=("$_line")
       last_comment=""
     fi
   done < "$file"
- 
+
 }
- 

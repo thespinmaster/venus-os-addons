@@ -1,3 +1,4 @@
 #!/bin/sh
- 
-"${VE_ROOT_DIR:-}/data/test-install/installer" "$1" "$0"
+
+# echo "${SCRIPT_DIR}"
+# "${VE_ROOT_DIR:-}/data/apps/available/test-install/installer" "$1" "$0"

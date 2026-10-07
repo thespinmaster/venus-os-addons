@@ -1,0 +1,12 @@
+# list of paths to overlay
+#gui-v1 qml files
+/opt/victronenergy/gui/qml
+#service-templates (for serial sevices etc)
+/opt/victronenergy/service-templates
+# vespera bin location
+# use /bin not /usr/bin as /usr/bin/svscanboot causes issues unmounting
+/bin
+#serial starter rules folder
+/etc/udev/rules.d
+#conatins serial-starter.conf
+/etc/venus

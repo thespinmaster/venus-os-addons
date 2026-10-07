@@ -1,0 +1,269 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+declare __this_path; __this_path="$(dirname "${BASH_SOURCE[0]}")"
+declare VESPERA_DIR; VESPERA_DIR="$(cd "${__this_path}/.." && pwd)"
+
+# shellcheck source=/data/dev/addons/vespera/src/data/apps/available/vespera/libs/source-lib
+source "$VESPERA_DIR/libs/source-lib"
+addsource "conf/vespera.conf"
+VESPERA_FEEDS_SYMLINK="${VESPERA_DATA_DIR}/feeds.conf"
+
+# Expand rootfs/ make it v
+opkg_lib_expand_root_fs() {
+	local is_ro;is_ro=$(grep -qE " / .* ro[ ,]" /proc/mounts)
+	/opt/victronenergy/swupdate-scripts/resize2fs.sh
+	[[ $is_ro == 0 ]] && mount -o remount,ro /
+}
+
+opkg_lib_show_feed_contents() {
+	opkg_lib_show_feed_name
+	echo "file: $(readlink "${VESPERA_FEEDS_SYMLINK}")"
+	sed -e '/./,$!d' -e 's/[[:space:]]*$//' "$VESPERA_FEEDS_SYMLINK"
+	echo
+}
+opkg_lib_list_feed_sources() {
+	#shellcheck disable=SC2011
+	ls "$VESPERA_APP_DIR/conf/feeds-"*.conf | xargs -n1 basename
+}
+
+opkg_lib_set_feed_source() {
+	local feed_name="${1#feed-}"
+	local feed_file="$VESPERA_APP_DIR/conf/feeds-$feed_name.conf"
+
+	[[ -f "$feed_file" ]] || { echo "feed name not found:$feed_file" >&2; return 1; }
+
+	ln -sf "$feed_file" "$VESPERA_FEEDS_SYMLINK"
+}
+opkg_lib_show_feed_name() {
+	opkg_ensure_feed_symlink
+	local feed_name; feed_name="$(readlink "${VESPERA_FEEDS_SYMLINK}")"
+	feed_name="${feed_name##*/feeds-}"
+	feed_name="${feed_name%.*}"
+	echo "$feed_name"
+}
+
+opkg_lib_feed_crud() {
+
+	local mode="${1:-}"
+	local feed_name="${2:-}"
+	local feed_url="${3:-}"
+	local old_feed_name="${4:-}"
+	local feeds_file="${VESPERA_FEEDS_SYMLINK}"
+	local existing_feed_name="${feed_name}"
+	local feed_line=
+	local tmp_file=
+	local -i exists=0
+	local -i found=0
+
+	feed_name_exists() {
+		grep -qE "^src/gz ${1} " "${feeds_file}" 2>/dev/null
+	}
+
+	# Validate mode
+	case "${mode:-}" in add|edit|remove) ;; *) echo "Invalid mode: $mode"; return 1 ;; esac
+
+	# Validate feed_name
+	[[ -z "${feed_name}" ]] && { echo "Invalid name" >&2; return 1; }
+	[[ "${feed_name}" =~ [^a-zA-Z0-9_-] ]] && { echo "Invalid name" >&2; return 1; }
+	[[ "${feed_name}" == "vespera" ]] && { echo "The vespera feed cannot be removed/edited"; return 1; }
+
+	if [[ -n "${old_feed_name}" ]] && [[ "${old_feed_name}" =~ [^a-zA-Z0-9_-] ]]; then
+		echo "Invalid old name: '${old_feed_name}'" >&2
+		return 1
+	fi
+	[[ -n "${old_feed_name}" ]] && existing_feed_name="${old_feed_name}"
+
+	: >> "${feeds_file}"
+
+	if [[ "${mode}" == add ]] || [[ "${mode}" == edit ]]; then
+		[[ -z "${feed_url}" ]] && { echo "${mode}: feed url required" >&2; return 1; }
+	fi
+
+	if [[ "${mode}" == remove ]] && [[ -n "${old_feed_name}" ]]; then
+		echo "remove: old feed name not supported" >&2
+		return 1
+	fi
+
+	if feed_name_exists "${existing_feed_name}"; then
+		exists=1
+	fi
+
+	opkg_ensure_feed_symlink || return
+	[[ -L "${feeds_file}" ]] && feeds_file="$(readlink "${VESPERA_FEEDS_SYMLINK}")"
+
+	if [[ "${mode}" == add ]]; then
+		((exists)) && { echo "Feed already exists: ${feed_name}" >&2; return 1; }
+		printf '\nsrc/gz %s %s\n' "${feed_name}" "${feed_url}" >> "${feeds_file}" \
+			|| { echo "Error writing to ${feeds_file}" >&2; return 1; }
+		return 0
+	fi
+
+	((!exists)) && { echo "Feed not found: $existing_feed_name" >&2; return 1; }
+
+	if [[ "${mode}" == edit ]] && [[ -n "${old_feed_name}" ]] && [[ "${feed_name}" != "${old_feed_name}" ]]; then
+		if feed_name_exists "${feed_name}"; then
+			echo "Invalid name; feed name already exists: $feed_name" >&2
+			return 1
+		fi
+	fi
+
+	tmp_file=$(mktemp)
+	feed_line="src/gz ${feed_name} ${feed_url}"
+
+	while IFS= read -r line; do
+		if [[ "$line" == src/gz\ ${existing_feed_name}\ * ]]; then
+			[[ "${mode}" != remove ]] && echo "$feed_line"
+			found=1
+			continue
+		fi
+		echo "$line"
+	done < "${feeds_file}" > "$tmp_file"
+
+	if ((!found)); then
+		rm -f "$tmp_file"
+		echo "Feed not found: $existing_feed_name" >&2
+		return 1
+	fi
+
+	mv "$tmp_file" "${feeds_file}" || { echo "Error writing to ${feeds_file}" >&2; return 1; }
+
+	return 0
+}
+
+opkg_lib_process_opkg_status() {
+	local package=
+
+	___extra_status_content() {
+		local app="${1}"
+		[[ "$(readlink "/data/apps/enabled/$app")" == "/data/apps/available/$app" ]] && value=true
+		echo "Enabled: $([[ "$value" == true ]] && echo "yes" || echo "no")"
+		[[ -f /data/apps/available/$app/gui-v2/$app.json ]] && value=true || value=false
+		echo "Gui-v2 Addon: $([[ "$value" == true ]] && echo "yes" || echo "no")"
+	}
+
+	while IFS= read -r line; do
+		if [[ -z "$line" && -n "$package" ]]; then
+			___extra_status_content "$package"
+			package=
+		fi
+		echo "$line"
+		[[ "$line" == Package:\ * ]] && package="${line#Package: }"
+	done
+
+	# Handle a final package with no trailing blank line.
+	[[ -n "$package" ]] && ___extra_status_content "$package"
+}
+
+opkg_lib_list_packages() {
+	local all="${1:-}"
+
+	if [[ "$all" == "all" ]]; then
+		opkg -f "${VESPERA_COMBINED_CONF_FILE}" list-installed |
+			cut -d ' ' -f1
+	else
+		opkg -f "${VESPERA_COMBINED_CONF_FILE}" list-installed |
+			sed '/^vespera - /d' |
+			cut -d ' ' -f1
+	fi
+}
+
+opkg_lib_list_enabled_packages() {
+	local all="${1:-}"
+	for package in $(opkg_lib_list_packages "$all"); do
+		[[ ! -e "/data/apps/enabled/$package" ]] && continue
+		echo "$package"
+	done
+}
+
+opkg_lib_get_configure_order() {
+	[[ ! -f "${VESPERA_DATA_DIR}/status" ]] && return 0
+
+	awk '
+		/^Package: /       { pkg=$2 }
+		/^Installed-Time:/ { time=$2 }
+		/^$/ {
+				if (time != "" && pkg != "vespera")
+					print time "\t" pkg
+			pkg=time=""
+		}
+	' "${VESPERA_DATA_DIR}/status" |
+		sort -n |
+		cut -f2
+}
+
+opkg_lib_configure_packages() {
+	local ordered_pkgs="${1:-}"
+
+	if [[ -n "$ordered_pkgs" ]]; then
+		# shellcheck disable=SC2086
+		opkg -f "${VESPERA_COMBINED_CONF_FILE}" configure vespera $ordered_pkgs
+	else
+		opkg -f "${VESPERA_COMBINED_CONF_FILE}" configure vespera
+	fi
+}
+
+opkg_ensure_feed_symlink() {
+	if [[ -L "${VESPERA_FEEDS_SYMLINK}" && ! -e "${VESPERA_FEEDS_SYMLINK}" ]]; then
+		# 1. It IS a symlink, but its target does NOT exist (Broken Symlink)
+		echo "vespera: feeds symlink target file not found: $(readlink "$VESPERA_FEEDS_SYMLINK")" >&2
+		return 1
+	elif [[ ! -e "${VESPERA_FEEDS_SYMLINK}" ]]; then
+		# 2. Target/File does NOT exist (and it's not even a broken symlink)
+		if [[ -f $VESPERA_FEEDS_FILE ]]; then
+			ln -sf "$VESPERA_FEEDS_FILE" "$VESPERA_FEEDS_SYMLINK"
+		else
+			echo "vespera: feeds file not found: $VESPERA_FEEDS_FILE" >&2
+		fi
+
+	#  else  # 3. Target exists
+	fi
+}
+
+opkg_ensure_combined_conf_file() {
+
+	if [[ ! -f "${VESPERA_FEEDS_CONF_FILE}" ]]; then
+		echo "vespera: feeds configuration not found: ${VESPERA_FEEDS_CONF_FILE}" >&2
+		return
+	fi
+
+	opkg_ensure_feed_symlink || return
+
+	# -nt follows symlinks
+	# stat checks actual symlink file itself
+
+	if [[ ! -f "${VESPERA_COMBINED_CONF_FILE}" ]] || \
+		[[ "${VESPERA_FEEDS_CONF_FILE}" -nt "${VESPERA_COMBINED_CONF_FILE}" ]] || \
+		[[ "${VESPERA_FEEDS_SYMLINK}" -nt "${VESPERA_COMBINED_CONF_FILE}" ]] || \
+		[[ $(stat -c %Y "${VESPERA_FEEDS_SYMLINK}") -gt $(stat -c %Y "${VESPERA_COMBINED_CONF_FILE}") ]]; then
+
+		local combined_dir; combined_dir="$(dirname "${VESPERA_COMBINED_CONF_FILE}")"
+		mkdir -p "${combined_dir}"
+
+		cat "${VESPERA_FEEDS_CONF_FILE}" "${VESPERA_FEEDS_SYMLINK}" > "${VESPERA_COMBINED_CONF_FILE}"
+	fi
+}
+
+opkg_lib_update() {
+	local args=("$@")
+	# if VESPERA_VERBOSITY < 2 then hide output from update
+	# unless opkg option -V[n] has neen supplied
+	if [[ "${VESPERA_VERBOSITY:-}" -lt 2 ]]; then
+		local arg
+		local has_verbosity=0
+
+		for arg in "${args[@]}"; do
+			case "$arg" in
+				-V[0-9])
+					has_verbosity=1
+					break
+					;;
+			esac
+		done
+
+		[[ "$has_verbosity" -eq 0 ]] && args=("-V0" "${args[@]}")
+	fi
+
+	opkg -f "${VESPERA_COMBINED_CONF_FILE}" "${args[@]}" update || exit
+}

@@ -3,7 +3,7 @@ set -euo pipefail
 
 readonly this_path="$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")"
 readonly usb_lib="$this_path/libs/usb-lib"
-readonly dbus_common="/data/dev/addons/opkg-manager/src/data/opkg-manager/dbus-common"
+readonly dbus_common="/data/dev/addons/vespera/src/data/apps/vespera/libs/dbus-lib"
 readonly serial_starter_rules="/etc/udev/rules.d/serial-starter.rules"
 readonly serial_starter_conf="/etc/venus/serial-starter.conf"
 readonly service_templates_dir="/opt/victronenergy/service-templates"
@@ -175,7 +175,7 @@ check_service() {
 print_help() {
   cat <<'EOF'
 Dev helper commands:
-  dev start 
+  dev start
       Start the supplied service.
   dev restart
       Restart the supplied service.
@@ -218,9 +218,9 @@ dbus_run() {
   case "${1:-}" in
     delete-tree)
       [[ -n "${2:-}" ]] || { echo "ERROR: invalid path'" >&2; return 1; }
-      "${dbus_common}" dbus-delete-tree "${2}" 
+      "${dbus_common}" dbus-delete-tree "${2}"
       ;;
-    
+
     *)
       echo "ERROR: Unknown dbus command: ${1:-<missing>}" >&2
       print_help >&2
@@ -234,9 +234,9 @@ run_monitor() {
   [[ -z "${1:-}" ]] && { echo "ERROR: Unknown monitor target" >&2; return 1; }
 
   local serviceName=${1#/service/}
-  
+
   if [[ ! -f /var/log/${serviceName}/current ]]; then
- 
+
     echo "ERROR: Unknown monitor target: ${1:-}" >&2
     return 1
   fi
@@ -273,7 +273,7 @@ run_shell() {
         export PS1
         return 0
       fi
- 
+
       printf 'copy: %s\n' "PS1='\\W# '"
       ;;
     *)
@@ -374,7 +374,7 @@ run_udev() {
     reload)
       udevadm control --reload
       [[ -n "${2:-}" ]] &&
-        run_udev ${2:-} "${3:-}" 
+        run_udev ${2:-} "${3:-}"
       ;;
     add|remove|change)
       [[ -z "${2:-}" ]] && echo "missing argument: tty port"
@@ -415,7 +415,7 @@ main() {
 
   case "${command}" in
     paths)
-      echo "$this_path" 
+      echo "$this_path"
       echo "$usb_lib"
       echo "$dbus_common"
       ;;

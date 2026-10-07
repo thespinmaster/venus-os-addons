@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(dirname "${BASH_SOURCE[0]}")"
+
+. "$this_path/../../../scripts/libs/test-lib"
+
+assets_dir="$(cd "$this_path/assets/file-patcher" && pwd)"
+output_root="$(cd "$this_path" && pwd)/output"
+output_dir="$output_root/file-patcher"
+patch_template="$assets_dir/installer-patch"
+patch_output="$output_dir/installer-patch"
+patcher_script="$this_path/../src/data/apps/available/vespera/libs/file-patcher-lib"
+# patcher_script="$this_path/../src/data/apps/available/vespera/libs/file-patcher-lib.old"
+
+make_temp_patch_case() {
+  local case_dir
+  case_dir="$(mktemp -d)"
+  printf '%s' "$case_dir"
+}
+
+write_patch_case_file() {
+  local file_path="$1"
+  shift
+  printf '%s\n' "$@" > "$file_path"
+}
+
+now_ms() {
+  local ts
+  ts="$(date +%s%3N 2>/dev/null || true)"
+  if [[ -n "$ts" && "$ts" != *N ]]; then
+    printf '%s' "$ts"
+    return 0
+  fi
+
+  # Fallback for date variants without millisecond support.
+  printf '%s' "$(( $(date +%s) * 1000 ))"
+}
+
+clear_output() {
+  mkdir -p "$output_root"
+  rm -rf -- "$output_dir"
+  mkdir -p "$output_dir"
+}
+
+stage_assets() {
+  cp -a "$assets_dir/." "$output_dir/"
+}
+
+stage_patch_file() {
+  sed "s|$assets_dir|$output_dir|g" "$patch_template" > "$patch_output"
+}
+
+test_file_patcher_apply_patch_on_staged_assets() {
+  local -i started_ms=0
+  local -i ended_ms=0
+  local -i elapsed_ms=0
+
+  clear_output
+  stage_assets
+  stage_patch_file
+
+	echo "patcher_script=$patcher_script"
+
+  started_ms="$(now_ms)"
+  "$patcher_script" apply "$patch_output"
+  ended_ms="$(now_ms)"
+  elapsed_ms=$((ended_ms-started_ms))
+
+  printf 'file-patcher apply elapsed_ms=%s\n' "$elapsed_ms"
+
+  assert_file_exists "$output_dir/Main.qml"
+  assert_file_exists "$output_dir/MbSubMenu.qml"
+  assert_file_exists "$output_dir/PageMain.qml"
+  assert_file_exists "$output_dir/serial-starter.conf"
+}
+
+test_file_patcher_insertbefore() {
+  local case_dir target patch
+  case_dir="$(make_temp_patch_case)"
+  target="$case_dir/insertbefore.txt"
+  patch="$case_dir/insertbefore.patch"
+
+  write_patch_case_file "$target" \
+    "alpha" \
+    "marker" \
+    "omega"
+
+  write_patch_case_file "$patch" \
+    "@openfile" \
+    "====" \
+    "$target" \
+    "====" \
+    "@find" \
+    "====" \
+    "marker" \
+    "====" \
+    "@insertbefore" \
+    "====" \
+    "before-line" \
+    "===="
+
+  "$patcher_script" apply "$patch"
+
+  assert_file_contains "$target" "before-line" "insertbefore inserted content"
+  assert_files_eq "$target" <(printf 'alpha\nbefore-line\nmarker\nomega\n') "insertbefore preserved order"
+  rm -rf -- "$case_dir"
+}
+
+test_file_patcher_insertafter() {
+  local case_dir target patch
+  case_dir="$(make_temp_patch_case)"
+  target="$case_dir/insertafter.txt"
+  patch="$case_dir/insertafter.patch"
+
+  write_patch_case_file "$target" \
+    "alpha" \
+    "marker" \
+    "omega"
+
+  write_patch_case_file "$patch" \
+    "@openfile" \
+    "====" \
+    "$target" \
+    "====" \
+    "@find" \
+    "====" \
+    "marker" \
+    "====" \
+    "@insertafter" \
+    "====" \
+    "after-line" \
+    "===="
+
+  "$patcher_script" apply "$patch"
+
+  assert_file_contains "$target" "after-line" "insertafter inserted content"
+  assert_files_eq "$target" <(printf 'alpha\nmarker\nafter-line\nomega\n') "insertafter preserved order"
+  rm -rf -- "$case_dir"
+}
+
+test_file_patcher_remove() {
+  local case_dir target patch
+  case_dir="$(make_temp_patch_case)"
+  target="$case_dir/remove.txt"
+  patch="$case_dir/remove.patch"
+
+  write_patch_case_file "$target" \
+    "alpha" \
+    "marker" \
+    "omega"
+
+  write_patch_case_file "$patch" \
+    "@openfile" \
+    "====" \
+    "$target" \
+    "====" \
+    "@remove" \
+    "====" \
+    "marker" \
+    "===="
+
+  "$patcher_script" apply "$patch"
+
+  assert_files_eq "$target" <(printf 'alpha\n/*\nmarker\n*/\nomega\n') "remove wraps content in block comment markers"
+  rm -rf -- "$case_dir"
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

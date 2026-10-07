@@ -1,11 +1,11 @@
-Package: opkg-manager
+Package: vespera
 Version: 1.1.0+d260530.0947
 Section: utilities
 Architecture: all
 Maintainer: thespinmaster@github.com
 MD5Sum: 368c299d5dcef353487a217438c60500
 Size: 99258
-Filename: opkg-manager_1.1.0+d260530.0947_all.ipk
+Filename: vespera_1.1.0+d260530.0947_all.ipk
 Source: https://thespinmaster.github.io/venus-os-addons
 Description:  A manager for installing opkg packages on the Venus OS
 OE: einstine

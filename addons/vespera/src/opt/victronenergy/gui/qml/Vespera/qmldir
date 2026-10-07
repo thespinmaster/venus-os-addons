@@ -1,2 +1,2 @@
 module Theming
-singleton OpkgDeviceModel 1.0 OpkgDeviceModel.qml
+singleton VesperaDeviceModel 1.0 VesperaDeviceModel.qml

@@ -7,14 +7,13 @@ this_path="$(dirname "${BASH_SOURCE[0]}")"
 
 run_chunk_cleanup_check() {
   local scenario="$1"
-  local module_dir="$this_path/../src/opt/victronenergy/opkg-manager"
+    local module_dir="$this_path/../src/data/apps/available/vespera/services/vespera"
 
   PYTHONPATH="$module_dir" python3 - "$scenario" <<'PY'
 import sys
 import types
 
 scenario = sys.argv[1]
-
 
 def install_test_stubs():
     dbus_module = types.ModuleType("dbus")

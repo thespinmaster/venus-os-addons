@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_root="$this_path/../src/data/apps/available/vespera"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+
+TEST_ROOT=
+TEST_SCRIPT=
+
+stage_refresh_runtime() {
+  TEST_ROOT="$(vt_make_test_root)"
+  mkdir -p "$TEST_ROOT/bin" "$TEST_ROOT/dev/serial-starter" "$TEST_ROOT/var/lock/serial-starter" "$TEST_ROOT/service/serial-starter"
+
+  TEST_SCRIPT="$TEST_ROOT/data/apps/available/vespera/scripts/refresh-devices"
+  mkdir -p "$(dirname "$TEST_SCRIPT")" "$TEST_ROOT/data/apps/available/vespera/conf"
+  cp "$source_root/conf-default/vespera.conf" "$TEST_ROOT/data/apps/available/vespera/conf/vespera.conf"
+  cp "$source_root/scripts/refresh-devices" "$TEST_SCRIPT"
+  chmod +x "$TEST_SCRIPT"
+
+  cat > "$TEST_ROOT/bin/svstat" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${SERIAL_STARTER_UP:-1}" == "1" ]]; then
+  printf '%s: up (pid 12) 4 seconds\n' "$1"
+else
+  printf '%s: down 4 seconds\n' "$1"
+fi
+EOF
+  chmod +x "$TEST_ROOT/bin/svstat"
+
+  cat > "$TEST_ROOT/bin/svc" <<'EOF'
+#!/usr/bin/env bash
+printf 'svc:%s\n' "$*" >> "$TEST_LOG"
+EOF
+  chmod +x "$TEST_ROOT/bin/svc"
+
+  cat > "$TEST_ROOT/bin/udevadm" <<'EOF'
+#!/usr/bin/env bash
+printf 'udevadm:%s\n' "$*" >> "$TEST_LOG"
+EOF
+  chmod +x "$TEST_ROOT/bin/udevadm"
+
+  : > "$TEST_ROOT/refresh.log"
+}
+
+cleanup_refresh_runtime() {
+  [[ -n "${TEST_ROOT:-}" ]] && vt_safe_rm_rf "$TEST_ROOT"
+}
+
+test_refresh_devices_calls_reload_trigger_settle_and_service_controls() {
+  stage_refresh_runtime
+
+  TEST_LOG="$TEST_ROOT/refresh.log" VESPERA_ROOT="$TEST_ROOT" SERIAL_STARTER_UP=1 PATH="$TEST_ROOT/bin:$PATH" bash "$TEST_SCRIPT"
+
+  assert_exitcode 0
+  assert_file_contains "$TEST_ROOT/refresh.log" "svc:-d $TEST_ROOT/service/serial-starter"
+  assert_file_contains "$TEST_ROOT/refresh.log" 'udevadm:control --reload-rules'
+  assert_file_contains "$TEST_ROOT/refresh.log" 'udevadm:trigger --action=add --subsystem-match=tty --property-match=ID_BUS=usb'
+  assert_file_contains "$TEST_ROOT/refresh.log" 'udevadm:settle'
+  assert_file_contains "$TEST_ROOT/refresh.log" "svc:-u $TEST_ROOT/service/serial-starter"
+
+  cleanup_refresh_runtime
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

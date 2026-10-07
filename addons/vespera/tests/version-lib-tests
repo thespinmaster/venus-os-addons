@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_lib="$this_path/../src/data/apps/available/vespera/libs/version-lib"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+
+TEST_ROOT=
+TEST_LIB=
+
+stage_version_runtime() {
+  TEST_ROOT="$(vt_make_test_root)"
+  TEST_LIB="$TEST_ROOT/version-lib"
+
+  cp "$source_lib" "$TEST_LIB"
+  sed -i "s|/opt/victronenergy/version|$TEST_ROOT/version|g" "$TEST_LIB"
+}
+
+cleanup_version_runtime() {
+  [[ -n "${TEST_ROOT:-}" ]] && vt_safe_rm_rf "$TEST_ROOT"
+}
+
+test_version_lib_get_venus_verion_byref_reads_and_strips_prefix_char() {
+  stage_version_runtime
+  printf 'v3.62\n' > "$TEST_ROOT/version"
+
+  # shellcheck disable=SC1090
+  source "$TEST_LIB"
+
+  local out=''
+  version_lib_get_venus_verion_byref out
+
+  assert_exitcode 0
+  assert_eq '3.62' "$out"
+
+  cleanup_version_runtime
+}
+
+test_version_lib_check_supports_multiple_and_comparison_operators() {
+  stage_version_runtime
+  # shellcheck disable=SC1090
+  source "$TEST_LIB"
+
+  version_lib_check '>3.60 <3.70' '3.62'
+  assert_exitcode 0
+
+  version_lib_check '<=3.60' '3.62'
+  assert_exitcode_not 0
+
+  cleanup_version_runtime
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

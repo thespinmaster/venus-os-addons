@@ -4,49 +4,52 @@ set -o nounset
 
 this_path="$(dirname "${BASH_SOURCE[0]}")"
 . "$this_path/../../../scripts/libs/test-lib"
-. "$this_path/../src/data/opkg-manager/serial-device-installer"
-
+. "$this_path/../src/data/apps/available/vespera/libs/serial-device-installer-lib"
 
 __stage_base_paths() {
   local -n _base_ref="$1"
-  _base_ref="/tmp/opkg-manager-available-devices-tests"
-  rm -rf "$_base_ref"
-  mkdir -p "$_base_ref"
+  _base_ref="/tmp/vespera-available-devices-tests"
+  rm -rf -- "$_base_ref"
+  mkdir -p -- "$_base_ref"
 }
 
 
-test_get_available_devices_lists_repeated_failures() {
+test_get_available_devices_returns_free_ttys_when_serial_starter_is_down() {
   # Arrange
   local base=""
   __stage_base_paths base
-  local tty0="$base/sys/class/tty/ttyUSB0"
-  local tty1="$base/sys/class/tty/ttyACM0"
-  local SERIAL_STARTER_QUEUE_DIR="$base/dev/serial-starter"
-  local SERIAL_STARTER_SERVICE_DIR="$base/service"
-  local SERIAL_STARTER_LOCK_DIR="$base/lock"
-  local SERIAL_STARTER_FAILURE_MIN_DOWN_SECONDS=15
-  mkdir -p "${tty0%/*}" "${tty1%/*}"
-  mkdir -p "$SERIAL_STARTER_QUEUE_DIR" "$SERIAL_STARTER_SERVICE_DIR" "$SERIAL_STARTER_LOCK_DIR"
+  local SERIAL_STARTER_DEV_DIR="$base/dev"
+  local tty0="$SERIAL_STARTER_DEV_DIR/ttyUSB0"
+  local tty1="$SERIAL_STARTER_DEV_DIR/ttyACM0"
+  mkdir -p "$SERIAL_STARTER_DEV_DIR"
   : > "$tty0"
   : > "$tty1"
-  : > "$SERIAL_STARTER_QUEUE_DIR/ttyUSB0"
-  : > "$SERIAL_STARTER_QUEUE_DIR/ttyACM0"
-  : > "$SERIAL_STARTER_SERVICE_DIR/testA.ttyUSB0"
-  : > "$SERIAL_STARTER_SERVICE_DIR/testB.ttyACM0"
 
-  serial_device_installer_get_tty_paths() { echo "$tty0 $tty1"; }
+  __sdi_get_tty_paths() {
+    local -n _out="$1"
+    _out=("$tty0" "$tty1")
+  }
 
-  __serial_device_installer_svstat() {
-    case "$1" in
-      *ttyUSB0) echo "$1: down 100 seconds" ;;
-      *ttyACM0) echo "$1: down 99 seconds" ;;
-    esac
+  svstat() {
+    echo "/service/serial-starter: down"
+  }
+
+  fuser() {
+    return 1
+  }
+
+  readlink() {
+    return 1
+  }
+
+  rm() {
+    return 0
   }
 
   local out=
 
   # Act
-  out="$(serial_device_installer_get_available_devices)"
+  out="$(sdi_get_available_devices)"
 
   # Assert
   assert_exitcode 0
@@ -58,25 +61,31 @@ test_get_available_devices_filters_specific_tty() {
   # Arrange
   local base=""
   __stage_base_paths base
-  local tty0="$base/sys/class/tty/ttyUSB1"
-  local SERIAL_STARTER_QUEUE_DIR="$base/dev/serial-starter"
-  local SERIAL_STARTER_SERVICE_DIR="$base/service"
-  local SERIAL_STARTER_LOCK_DIR="$base/lock"
-  local SERIAL_STARTER_FAILURE_MIN_DOWN_SECONDS=15
-  mkdir -p "${tty0%/*}"
-  mkdir -p "$SERIAL_STARTER_QUEUE_DIR" "$SERIAL_STARTER_SERVICE_DIR" "$SERIAL_STARTER_LOCK_DIR"
+  local SERIAL_STARTER_DEV_DIR="$base/dev"
+  local tty0="$SERIAL_STARTER_DEV_DIR/ttyUSB1"
+  mkdir -p "$SERIAL_STARTER_DEV_DIR"
   : > "$tty0"
-  : > "$SERIAL_STARTER_QUEUE_DIR/ttyUSB1"
-  : > "$SERIAL_STARTER_SERVICE_DIR/test.ttyUSB1"
 
-  serial_device_installer_get_tty_paths() { echo "$tty0"; }
+  svstat() {
+    echo "/service/serial-starter: down"
+  }
 
-  __serial_device_installer_svstat() { echo "$1: down 120 seconds"; }
+  fuser() {
+    return 1
+  }
+
+  readlink() {
+    return 1
+  }
+
+  rm() {
+    return 0
+  }
 
   local out=
 
   # Act
-  out="$(serial_device_installer_get_available_devices ttyUSB1)"
+  out="$(sdi_get_available_devices ttyUSB1)"
 
   # Assert
   assert_exitcode 0
@@ -84,106 +93,40 @@ test_get_available_devices_filters_specific_tty() {
 }
 
 
-test_get_available_devices_excludes_tty_not_in_serial_starter_queue() {
+test_get_available_devices_skips_ttys_claimed_by_fuser() {
   # Arrange
   local base=""
   __stage_base_paths base
-  local tty0="$base/sys/class/tty/ttyUSB2"
-  local tty1="$base/sys/class/tty/ttyACM2"
-  local SERIAL_STARTER_QUEUE_DIR="$base/dev/serial-starter"
-  local SERIAL_STARTER_SERVICE_DIR="$base/service"
-  local SERIAL_STARTER_LOCK_DIR="$base/lock"
-  local SERIAL_STARTER_FAILURE_MIN_DOWN_SECONDS=15
-  mkdir -p "${tty0%/*}" "${tty1%/*}"
-  mkdir -p "$SERIAL_STARTER_QUEUE_DIR" "$SERIAL_STARTER_SERVICE_DIR" "$SERIAL_STARTER_LOCK_DIR"
+  local SERIAL_STARTER_DEV_DIR="$base/dev"
+  local tty0="$SERIAL_STARTER_DEV_DIR/ttyUSB2"
+  mkdir -p "$SERIAL_STARTER_DEV_DIR"
   : > "$tty0"
-  : > "$tty1"
-  : > "$SERIAL_STARTER_QUEUE_DIR/ttyACM2"
-  : > "$SERIAL_STARTER_SERVICE_DIR/testA.ttyUSB2"
-  : > "$SERIAL_STARTER_SERVICE_DIR/testB.ttyACM2"
 
-  serial_device_installer_get_tty_paths() { echo "$tty0 $tty1"; }
+  __sdi_get_tty_paths() {
+    local -n _out="$1"
+    _out=("$tty0")
+  }
 
-  __serial_device_installer_svstat() {
-    case "$1" in
-      *ttyUSB2) echo "$1: down 100 seconds" ;;
-      *ttyACM2) echo "$1: down 100 seconds" ;;
-    esac
+  svstat() {
+    echo "/service/serial-starter: down"
+  }
+
+  fuser() {
+    return 0
+  }
+
+  readlink() {
+    return 1
+  }
+
+  rm() {
+    return 0
   }
 
   local out=
 
   # Act
-  out="$(serial_device_installer_get_available_devices)"
-
-  # Assert
-  assert_exitcode 0
-  assert_eq "ttyACM2" "$out"
-}
-
-
-test_get_available_devices_includes_only_tty_with_repeated_down_state() {
-  # Arrange
-  local base=""
-  __stage_base_paths base
-  local tty0="$base/sys/class/tty/ttyUSB3"
-  local tty1="$base/sys/class/tty/ttyACM3"
-  local SERIAL_STARTER_QUEUE_DIR="$base/dev/serial-starter"
-  local SERIAL_STARTER_SERVICE_DIR="$base/service"
-  local SERIAL_STARTER_LOCK_DIR="$base/lock"
-  local SERIAL_STARTER_FAILURE_MIN_DOWN_SECONDS=15
-  mkdir -p "${tty0%/*}" "${tty1%/*}"
-  mkdir -p "$SERIAL_STARTER_QUEUE_DIR" "$SERIAL_STARTER_SERVICE_DIR" "$SERIAL_STARTER_LOCK_DIR"
-  : > "$tty0"
-  : > "$tty1"
-  : > "$SERIAL_STARTER_QUEUE_DIR/ttyUSB3"
-  : > "$SERIAL_STARTER_QUEUE_DIR/ttyACM3"
-  : > "$SERIAL_STARTER_SERVICE_DIR/testA.ttyUSB3"
-  : > "$SERIAL_STARTER_SERVICE_DIR/testB.ttyACM3"
-
-  serial_device_installer_get_tty_paths() { echo "$tty0 $tty1"; }
-
-  __serial_device_installer_svstat() {
-    case "$1" in
-      *ttyUSB3) echo "$1: up (pid 123) 20 seconds" ;;
-      *ttyACM3) echo "$1: down 100 seconds" ;;
-    esac
-  }
-
-  local out=
-
-  # Act
-  out="$(serial_device_installer_get_available_devices)"
-
-  # Assert
-  assert_exitcode 0
-  assert_eq "ttyACM3" "$out"
-}
-
-
-test_get_available_devices_excludes_tty_when_down_too_recent() {
-  # Arrange
-  local base=""
-  __stage_base_paths base
-  local tty0="$base/sys/class/tty/ttyUSB4"
-  local SERIAL_STARTER_QUEUE_DIR="$base/dev/serial-starter"
-  local SERIAL_STARTER_SERVICE_DIR="$base/service"
-  local SERIAL_STARTER_LOCK_DIR="$base/lock"
-  local SERIAL_STARTER_FAILURE_MIN_DOWN_SECONDS=15
-  mkdir -p "${tty0%/*}"
-  mkdir -p "$SERIAL_STARTER_QUEUE_DIR" "$SERIAL_STARTER_SERVICE_DIR" "$SERIAL_STARTER_LOCK_DIR"
-  : > "$tty0"
-  : > "$SERIAL_STARTER_QUEUE_DIR/ttyUSB4"
-  : > "$SERIAL_STARTER_SERVICE_DIR/test.ttyUSB4"
-
-  serial_device_installer_get_tty_paths() { echo "$tty0"; }
-
-  __serial_device_installer_svstat() { echo "$1: down 4 seconds"; }
-
-  local out=
-
-  # Act
-  out="$(serial_device_installer_get_available_devices)"
+  out="$(sdi_get_available_devices)"
 
   # Assert
   assert_exitcode 0
@@ -191,135 +134,47 @@ test_get_available_devices_excludes_tty_when_down_too_recent() {
 }
 
 
-test_get_available_devices_includes_tty_with_lock_when_repeated_failure() {
+test_get_available_devices_removes_stale_lock_before_returning_tty() {
   # Arrange
   local base=""
   __stage_base_paths base
-  local tty0="$base/sys/class/tty/ttyUSB5"
-  local SERIAL_STARTER_QUEUE_DIR="$base/dev/serial-starter"
-  local SERIAL_STARTER_SERVICE_DIR="$base/service"
-  local SERIAL_STARTER_FAILURE_MIN_DOWN_SECONDS=15
-  mkdir -p "${tty0%/*}"
-  mkdir -p "$SERIAL_STARTER_QUEUE_DIR" "$SERIAL_STARTER_SERVICE_DIR"
+  local SERIAL_STARTER_DEV_DIR="$base/dev"
+  local tty0="$SERIAL_STARTER_DEV_DIR/ttyUSB3"
+  mkdir -p "$SERIAL_STARTER_DEV_DIR"
   : > "$tty0"
-  : > "$SERIAL_STARTER_QUEUE_DIR/ttyUSB5"
-  : > "$SERIAL_STARTER_SERVICE_DIR/test.ttyUSB5"
 
-  local SERIAL_STARTER_LOCK_DIR="$base/lock"
-  mkdir -p "$SERIAL_STARTER_LOCK_DIR"
-  ln -s "$$" "$SERIAL_STARTER_LOCK_DIR/ttyUSB5"
+  __sdi_get_tty_paths() {
+    local -n _out="$1"
+    _out=("$tty0")
+  }
 
-  serial_device_installer_get_tty_paths() { echo "$tty0"; }
+  svstat() {
+    echo "/service/serial-starter: down"
+  }
 
-  __serial_device_installer_svstat() { echo "$1: down 100 seconds"; }
+  fuser() {
+    return 1
+  }
 
-  local out=
+  readlink() {
+    return 1
+  }
 
-  # Act
-  out="$(serial_device_installer_get_available_devices)"
-
-  # Assert
-  assert_exitcode 0
-  assert_eq "ttyUSB5" "$out"
-}
-
-
-test_get_available_devices_includes_tty_with_stale_lock() {
-  # Arrange
-  local base=""
-  __stage_base_paths base
-  local tty0="$base/sys/class/tty/ttyUSB6"
-  local SERIAL_STARTER_QUEUE_DIR="$base/dev/serial-starter"
-  local SERIAL_STARTER_SERVICE_DIR="$base/service"
-  local SERIAL_STARTER_LOCK_DIR="$base/lock"
-  local SERIAL_STARTER_FAILURE_MIN_DOWN_SECONDS=15
-  mkdir -p "${tty0%/*}"
-  mkdir -p "$SERIAL_STARTER_QUEUE_DIR" "$SERIAL_STARTER_SERVICE_DIR" "$SERIAL_STARTER_LOCK_DIR"
-  : > "$tty0"
-  : > "$SERIAL_STARTER_QUEUE_DIR/ttyUSB6"
-  : > "$SERIAL_STARTER_SERVICE_DIR/test.ttyUSB6"
-  ln -s "999999" "$SERIAL_STARTER_LOCK_DIR/ttyUSB6"
-
-  serial_device_installer_get_tty_paths() { echo "$tty0"; }
-
-  __serial_device_installer_svstat() { echo "$1: down 100 seconds"; }
-
-  local out=
-
-  # Act
-  out="$(serial_device_installer_get_available_devices)"
-
-  # Assert
-  assert_exitcode 0
-  assert_eq "ttyUSB6" "$out"
-}
-
-
-test_get_available_devices_excludes_tty_with_mixed_up_and_down_services() {
-  # Arrange
-  local base=""
-  __stage_base_paths base
-  local tty0="$base/sys/class/tty/ttyUSB7"
-  local SERIAL_STARTER_QUEUE_DIR="$base/dev/serial-starter"
-  local SERIAL_STARTER_SERVICE_DIR="$base/service"
-  local SERIAL_STARTER_FAILURE_MIN_DOWN_SECONDS=0
-  mkdir -p "${tty0%/*}"
-  mkdir -p "$SERIAL_STARTER_QUEUE_DIR" "$SERIAL_STARTER_SERVICE_DIR"
-  : > "$tty0"
-  : > "$SERIAL_STARTER_QUEUE_DIR/ttyUSB7"
-  : > "$SERIAL_STARTER_SERVICE_DIR/old-failed.ttyUSB7"
-  : > "$SERIAL_STARTER_SERVICE_DIR/active-ok.ttyUSB7"
-
-  serial_device_installer_get_tty_paths() { echo "$tty0"; }
-
-  __serial_device_installer_svstat() {
-    case "$1" in
-      *old-failed.ttyUSB7) echo "$1: down 500 seconds" ;;
-      *active-ok.ttyUSB7) echo "$1: up (pid 456) 50 seconds" ;;
-    esac
+  rm() {
+    return 0
   }
 
   local out=
 
   # Act
-  out="$(serial_device_installer_get_available_devices)"
+  out="$(sdi_get_available_devices)"
 
   # Assert
   assert_exitcode 0
-  assert_eq "" "$out"
+  assert_eq "ttyUSB3" "$out"
 }
 
-
-test_get_available_devices_includes_tty_with_probe_up_normally_down() {
-  # Arrange
-  local base=""
-  __stage_base_paths base
-  local tty0="$base/sys/class/tty/ttyUSB8"
-  local SERIAL_STARTER_QUEUE_DIR="$base/dev/serial-starter"
-  local SERIAL_STARTER_SERVICE_DIR="$base/service"
-  local SERIAL_STARTER_FAILURE_MIN_DOWN_SECONDS=0
-  mkdir -p "${tty0%/*}"
-  mkdir -p "$SERIAL_STARTER_QUEUE_DIR" "$SERIAL_STARTER_SERVICE_DIR"
-  : > "$tty0"
-  : > "$SERIAL_STARTER_QUEUE_DIR/ttyUSB8"
-  : > "$SERIAL_STARTER_SERVICE_DIR/failed.ttyUSB8"
-  : > "$SERIAL_STARTER_SERVICE_DIR/probe.ttyUSB8"
-
-  serial_device_installer_get_tty_paths() { echo "$tty0"; }
-
-  __serial_device_installer_svstat() {
-    case "$1" in
-      *failed.ttyUSB8) echo "$1: down 8 seconds" ;;
-      *probe.ttyUSB8) echo "$1: up (pid 789) 1 seconds, normally down" ;;
-    esac
-  }
-
-  local out=
-
-  # Act
-  out="$(serial_device_installer_get_available_devices)"
-
-  # Assert
-  assert_exitcode 0
-  assert_eq "ttyUSB8" "$out"
-}
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  EXIT_ON_FAILED_TEST=1
+  test_runner_all --summary ""
+fi

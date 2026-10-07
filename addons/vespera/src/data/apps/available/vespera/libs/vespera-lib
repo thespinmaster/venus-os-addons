@@ -1,0 +1,239 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+VESPERA_VERSION=1.5
+VESPERA_IN_GUI="${VESPERA_IN_GUI:-false}"
+VESPERA_VERBOSITY="${VESPERA_VERBOSITY-}"
+VESPERA_WORKING_DIR="${VESPERA_WORKING_DIR-}"
+
+__vespera_path="$(dirname "${BASH_SOURCE[0]}")"
+__vespera_path="$(cd "${__vespera_path}/.." && pwd)"
+
+# shellcheck source=/data/dev/addons/vespera/src/data/apps/available/vespera/libs/source-lib
+source "$__vespera_path/libs/source-lib"
+addsource "conf/vespera.conf"
+addsource "libs/opkg-lib"
+
+vespera_lib_log_verbose2() { [[ "${VESPERA_VERBOSITY}" -gt 1 ]]; }
+vespera_lib_log_verbose3() { [[ "${VESPERA_VERBOSITY}" -gt 2 ]]; }
+
+vespera_lib_index() {	[[ -f "$VESPERA_INDEXER" ]] && "$VESPERA_INDEXER"; }
+
+vespera_lib_set_conf_value() {
+  local name="$1"
+  local value="$2"
+  sed -i "s|^${name}=.*|${name}=${value}|" "$VESPERA_ROOT/conf/vespera.conf"
+	printf -v "$name" '%s' "$value"
+}
+
+vespera_lib_bootstrap() {
+	cp /opt/victronenergy/version "${VESPERA_DATA_DIR}/venus-version"
+	opkg_ensure_combined_conf_file
+	opkg_lib_update
+	vespera_lib_post_install "install"
+}
+
+# Also used in rcS-local
+__vespera_lib_initialize() {
+	mkdir -p /var/lock/
+	VESPERA_WORKING_DIR="$(mktemp -d /tmp/vespera-XXXXXX)" || return 1
+	ln -sfn "$VESPERA_WORKING_DIR" "$VESPERA_LOCK_FILE"
+	trap '__vespera_lib_cleanup' EXIT
+}
+
+# Also used in rcS-local
+__vespera_lib_cleanup() {
+	vespera_lib_log_verbose2 && echo "Cleanup"
+
+	rm -f "$VESPERA_LOCK_FILE" "$VESPERA_GUI_LOCK_FILE"
+	trap - EXIT
+
+	rm -rf "${VESPERA_WORKING_DIR:?}/"
+	[[ -f "$VESPERA_DATA_DIR/info/vespera.installer" ]] && return
+
+	################################################
+	### everyting below is vespera package specific
+
+	___remove_file_if_empty() {
+		local file="${1}"
+		[[ -f "$file" ]] && [[ -z "$(sed 's/[[:space:]]//g' "$file")" ]] && rm -f "$file"
+	}
+
+	___remove_file_if_empty "$VESPERA_DATA_DIR/status"
+	rmdir "$VESPERA_DATA_DIR/info" 2>/dev/null
+	rm -rf "$VESPERA_DATA_DIR/lists" "$VESPERA_DATA_DIR/indexer.md5"
+	rm -f "$PACKAGE_DBUS_LIST_FILE" "$VESPERA_DATA_DIR/opkg.conf"
+
+	find "$VESPERA_DATA_DIR" -type d -empty -exec rmdir -p {} \; 2>/dev/null
+
+	if [[ -f "$VESPERA_DATA_DIR" ]]; then
+		printf '\033[31;1m\u274c\ufe0f\033[00m: %s\e[0m\n' "$VESPERA_DATA_DIR still exists"
+	fi
+
+}
+
+__vespera_send_gui_interrupt_signal() {
+	[[ "${VESPERA_IN_GUI:-}" != true ]] && return 0
+	echo ":::VESPERA-GUI-INTERRUPT:::"
+	sleep 3
+}
+
+vespera_lib_pre_install() {
+	local command="${1}"
+
+	[[ $command != "install" &&  $command != "upgrade" && $command != "remove" ]] && return
+
+	[[ -e "$VESPERA_GUI_LOCK_FILE" || -L "$VESPERA_GUI_LOCK_FILE" ]] && {
+		echo "Vespera already in use" >&2
+		return 1
+	}
+
+	__vespera_lib_initialize
+
+	grep -qE " / .* rw[ ,]" /proc/mounts && echo "WARNING: file system is read-write";
+
+	echo "Vespera version $VESPERA_VERSION"
+	if vespera_lib_log_verbose2; then
+		echo "Args: $*"
+		echo "$VESPERA_VERBOSITY" > "${VESPERA_WORKING_DIR}/$VESPERA_VERBOSITY_FILE"
+	fi
+
+}
+
+vespera_lib_post_install() {
+ 	local command="${1:-}"
+
+	[[ $command != "install" &&  $command != "upgrade" && $command != "remove" ]] && return
+
+	# if no state file assume installer did not run
+	[[ ! -f "$VESPERA_WORKING_DIR/$VESPERA_INSTALL_STATE_FILE" ]] && {
+		__vespera_lib_cleanup
+		return 0;
+	}
+
+	if [[ $command != "remove" ]] && grep -q "^vespera " "$VESPERA_WORKING_DIR/$VESPERA_INSTALL_STATE_FILE" 2>/dev/null; then
+		local vespera_version=$VESPERA_VERSION
+		source_lib_clear_source_guards # clear all sources
+		addsource "libs/vespera-lib"
+		[[ "$vespera_version" != "$VESPERA_VERSION" ]] && echo "Vespera version $VESPERA_VERSION"
+	fi
+	shift
+	__vespera_lib_post_install "$@"
+}
+
+# keep as sub function as vespera_lib_post_install reloads vespera-lib
+__vespera_lib_post_install() {
+	local -a venus_services_to_restart=()
+	local refresh_devices=false
+
+	# 1. let the ui know it will be interrupted
+	__vespera_send_gui_interrupt_signal
+
+	__do_enable_disable() {
+		local action="${1}"
+		echo "$2"
+		local output_vars; output_vars="$("$__vespera_path/scripts/$action" "${app}")"
+		eval "$output_vars"
+		venus_services_to_restart+=("${_venus_services_to_restart[@]}")
+		# shellcheck disable=SC2154
+		[[ $refresh_devices == false ]] && refresh_devices="$_refresh_devices"
+	}
+
+	# 2. enable new apps, remove old apps (symlink)
+	# VESPERA_INSTALL_STATE_FILE contains a list of the apps installed/removed
+	# status=installed|enabled|disabled (enabled=installed and enabled)
+	# Now the gui interrupt signal is sent; remove the gui-v2 json files.
+	local file="$VESPERA_WORKING_DIR/$VESPERA_INSTALL_STATE_FILE"
+	vespera_lib_log_verbose3 && __show_file_contents "$file" "__vespera_lib_post_install: processing file" >&2
+	while read -r app status; do
+		case "${status}" in
+			removed)
+				echo "Disabling ${app}"
+				rm -f "/data/apps/enabled/$app"
+				rm -f "/data/apps/available/$app/gui-v2/$app.json"
+				rmdir "/data/apps/available/$app/gui-v2" "/data/apps/available/$app" 2>/dev/null # remove if empty
+				venus_services_to_restart+=("$VESPERA_WORKING_DIR/$app.installer-services")
+				;;
+			disabled)
+				__do_enable_disable "disable" "Installed ${app} (disabled)";;
+			enabled)
+				__do_enable_disable "enable" "Enabling ${app}"
+				;;
+		esac
+
+	done < "$file"
+
+	# 4. refresh devices
+	[[ $refresh_devices == true ]] && vespera_lib_refresh_devices;
+
+	# 5. restart venus services
+	__vespera_lib_restart_venus_services venus_services_to_restart "${VESPERA_VERBOSITY}";
+
+	# 6. update json feeds/package index
+	vespera_lib_log_verbose2 && echo "Calling indexer"
+	vespera_lib_index
+
+	# 7. cleanup
+	__vespera_lib_cleanup
+}
+
+__show_file_contents() {
+	local file=$1 msg=$2
+	echo "$msg: $file"$'\n'"$(cat "$file")"
+}
+
+__vespera_lib_restart_venus_services() {
+	local -n services_array="$1"
+	local service
+
+	for file in "${services_array[@]}"; do
+		[[ -f "$file" ]] || { echo "__vespera_lib_restart_venus_services:file not found:$file" >&2; continue; }
+		vespera_lib_log_verbose3 && __show_file_contents "$file" "__vespera_lib_restart_venus_services: processing file" >&2
+		cat "$file"
+	done | sort -u | while IFS= read -r service || [ -n "$service" ]; do
+		service="${service%%#*}"
+		service="${service#"${service%%[![:space:]]*}"}"
+		service="${service%"${service##*[![:space:]]}"}"
+		[[ ! -d "$service" ]] && {
+			vespera_lib_log_verbose2 &&
+				echo "__vespera_lib_restart_venus_services:service not found:$service" >&2;
+				continue;
+		}
+		vespera_lib_log_verbose2 && echo "restarting $service"
+		svc -t "$service"
+	done
+}
+
+vespera_lib_refresh_devices() {
+	local serial_starter_up=false
+
+	svstat "/service/serial-starter" | grep -q "^/service/serial-starter: up " && serial_starter_up=true
+
+	rm -f /dev/serial-starter/*
+	svc -d /service/serial-starter
+
+	# clear stale locks, (causes lots of issues)
+	rm -f /var/lock/serial-starter/tty*
+
+	udevadm control --reload-rules >/dev/null;
+	udevadm trigger --action=add --subsystem-match=tty --property-match=ID_BUS=usb >/dev/null
+	udevadm settle >/dev/null
+
+	[[ $serial_starter_up == true ]]
+		svc -u /service/serial-starter
+}
+
+vespera_lib_enable_disable() {
+	local action=${1}
+	shift
+
+	__vespera_send_gui_interrupt_signal
+
+	local output_vars; output_vars="$("$__vespera_path/scripts/$action" "$@")"
+	# eval creates _refresh_devices & _venus_services_to_restart variables
+	eval "$output_vars"
+
+  __vespera_lib_restart_venus_services _venus_services_to_restart
+	[[ $_refresh_devices == true ]] && vespera_lib_refresh_devices
+}

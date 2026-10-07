@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_root="$this_path/../src/data/apps/available/vespera"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+
+TEST_ROOT=
+TEST_APP_ROOT=
+
+stage_vespera_lib_runtime() {
+  TEST_ROOT="$(vt_make_test_root)"
+  TEST_APP_ROOT="$TEST_ROOT/app/vespera"
+
+  mkdir -p "$TEST_APP_ROOT/libs" "$TEST_APP_ROOT/conf" "$TEST_APP_ROOT/scripts" "$TEST_ROOT/data/var/vespera"
+
+  cp "$source_root/libs/source-lib" "$TEST_APP_ROOT/libs/source-lib"
+  cp "$source_root/libs/vespera-lib" "$TEST_APP_ROOT/libs/vespera-lib"
+  chmod +x "$TEST_APP_ROOT/libs/source-lib" "$TEST_APP_ROOT/libs/vespera-lib"
+
+  cat > "$TEST_APP_ROOT/libs/opkg-lib" <<'EOF'
+#!/usr/bin/env bash
+opkg_ensure_combined_conf_file() { :; }
+EOF
+  chmod +x "$TEST_APP_ROOT/libs/opkg-lib"
+
+  cat > "$TEST_APP_ROOT/conf/vespera.conf" <<EOF
+#!/usr/bin/env bash
+VESPERA_DATA_DIR="$TEST_ROOT/data/var/vespera"
+VESPERA_INDEXER="$TEST_ROOT/indexer.sh"
+VESPERA_LOCK_FILE="$TEST_ROOT/vespera.lock"
+VESPERA_GUI_LOCK_FILE="$TEST_ROOT/vespera-gui.lock"
+VESPERA_INSTALL_STATE_FILE="install-state"
+VESPERA_VERBOSITY_FILE="verbosity"
+EOF
+}
+
+cleanup_vespera_lib_runtime() {
+  if [[ -n "${TEST_ROOT:-}" ]]; then
+    vt_safe_rm_rf "$TEST_ROOT"
+  fi
+}
+
+load_vespera_lib() {
+  # shellcheck disable=SC1090
+  source "$TEST_APP_ROOT/libs/vespera-lib"
+}
+
+test_vespera_lib_index_executes_existing_indexer() {
+  stage_vespera_lib_runtime
+
+  cat > "$TEST_ROOT/indexer.sh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' indexer-called > "$TEST_ROOT/indexer.log"
+EOF
+  chmod +x "$TEST_ROOT/indexer.sh"
+
+  load_vespera_lib
+  vespera_lib_index
+
+  assert_exitcode 0
+  assert_file_contains "$TEST_ROOT/indexer.log" 'indexer-called'
+
+  cleanup_vespera_lib_runtime
+}
+
+test_vespera_lib_pre_install_blocks_when_gui_lock_exists() {
+  stage_vespera_lib_runtime
+  load_vespera_lib
+
+  : > "$VESPERA_GUI_LOCK_FILE"
+
+  local stderr
+  stderr="$(vespera_lib_pre_install install 2>&1)"
+
+  assert_exitcode 1
+  assert_eq 'Vespera already in use' "$stderr"
+
+  cleanup_vespera_lib_runtime
+}
+
+test_vespera_lib_restart_venus_services_restarts_unique_existing_services() {
+  stage_vespera_lib_runtime
+  load_vespera_lib
+
+  local svc_log="$TEST_ROOT/svc.log"
+  mkdir -p "$TEST_ROOT/service-a" "$TEST_ROOT/service-b"
+
+  cat > "$TEST_ROOT/services-a.list" <<EOF
+$TEST_ROOT/service-a
+$TEST_ROOT/service-b
+EOF
+
+  cat > "$TEST_ROOT/services-b.list" <<EOF
+$TEST_ROOT/service-b
+$TEST_ROOT/missing-service
+EOF
+
+  svc() {
+    printf 'svc:%s\n' "$*" >> "$svc_log"
+  }
+
+  # shellcheck disable=SC2034
+  local -a service_files=("$TEST_ROOT/services-a.list" "$TEST_ROOT/services-b.list")
+  __vespera_lib_restart_venus_services service_files
+
+  assert_exitcode 0
+  assert_file_contains "$svc_log" "svc:-t $TEST_ROOT/service-a"
+  assert_file_contains "$svc_log" "svc:-t $TEST_ROOT/service-b"
+
+  local restart_count
+  restart_count="$(wc -l < "$svc_log")"
+  assert_eq '2' "$restart_count"
+
+  cleanup_vespera_lib_runtime
+}
+
+test_vespera_lib_enable_disable_runs_restart_and_refresh_from_script_output() {
+  stage_vespera_lib_runtime
+  load_vespera_lib
+
+  local marker_log="$TEST_ROOT/markers.log"
+
+  mkdir -p "$TEST_ROOT/service-c"
+  cat > "$TEST_ROOT/services-c.list" <<EOF
+$TEST_ROOT/service-c
+EOF
+
+  cat > "$TEST_APP_ROOT/scripts/enable" <<EOF
+#!/usr/bin/env bash
+echo '_refresh_devices=true'
+echo '_venus_services_to_restart=("$TEST_ROOT/services-c.list")'
+EOF
+  chmod +x "$TEST_APP_ROOT/scripts/enable"
+
+  __vespera_lib_restart_venus_services() {
+    printf 'restart:%s\n' "$*" >> "$marker_log"
+  }
+
+  vespera_lib_refresh_devices() {
+    printf '%s\n' 'refresh' >> "$marker_log"
+  }
+
+  vespera_lib_enable_disable enable demo
+
+  assert_exitcode 0
+  assert_file_contains "$marker_log" 'restart:_venus_services_to_restart'
+  assert_file_contains "$marker_log" 'refresh'
+
+  cleanup_vespera_lib_runtime
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

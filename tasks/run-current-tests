@@ -13,4 +13,4 @@ if [[ -z "$test_file" ]]; then
 	exit 1
 fi
 
-test_runner_on_source_file "$test_file" "$test_function_filter"
+test_runner_on_source_file --summary "$test_file" "$test_function_filter"

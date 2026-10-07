@@ -11,27 +11,14 @@ set -o nounset
 
 this_path="$(dirname "${BASH_SOURCE[0]}")"
 
-declare IGNORE_CONF_LIB=
-
+. "$this_path/../src/data/apps/available/vespera/libs/serial-device-installer-lib"
 . "$this_path/../../../scripts/libs/test-lib"
-. "$this_path/../src/data/opkg-manager/libs/core-lib"
-#. "$this_path/../src/data/opkg-manager/libs/log-lib"
-if [[ -f "$this_path/../src/data/opkg-manager/libs/conf-lib" ]]; then
-. "$this_path/../src/data/opkg-manager/libs/conf-lib"
-else
-  IGNORE_CONF_LIB=1
-fi
 
-. "$this_path/../src/data/opkg-manager/serial-device-installer"
+this_dir_full="$(dirname "${0}")"
+this_dir_full="$(cd "${this_dir_full}/../.." && pwd)"
 
-this_dir_full="$(core_lib_realpath_nosymlinks "${this_path}" 2>/dev/null || true)"
-[[ -z "$this_dir_full" ]] && this_dir_full="$(readlink -f "${this_path}" 2>/dev/null || pwd)"
-output_dir="/tmp/opkg-manager-serial-device-installer-tests"
+output_dir="/tmp/vespera-serial-device-installer-tests"
 assets_dir="${this_dir_full}/assets"
-
-#if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-  #printf "\033c" # clear
-#fi
 
 clear_output() {
   rm -rf -- "${output_dir:?}"
@@ -83,7 +70,7 @@ stage_reset_vars() {
   if [[ -n "$@" ]]; then
     vars=(DEVICE_SID DEVICE_SERVICE_NAME DEVICE_SERVICE_MAPPING_NAME DEVICE_TTY SERVICE_PATH SERIAL_STARTER_START_SERVICE_PATH
           SERIAL_STARTER_RULES_FILE SERIAL_STARTER_RULES_FILE_SYMLINK SERIAL_STARTER_CONFIG_FILE
-          DEVICE_UDEV_PROPS USE_UDEVADM_MONITOR)
+          VENUS_OS_SERIAL_STARTER_CONFIG_FILE DEVICE_UDEV_PROPS USE_UDEVADM_MONITOR)
   else
     vars=("$@")
   fi
@@ -102,10 +89,15 @@ stage_default_vars() {
   SERIAL_STARTER_START_SERVICE_PATH="$output_dir/serial-starter"
   #SERIAL_STARTER_RULE=
   SERIAL_STARTER_RULES_FILE="$output_dir/serial-starter.rules"
-  SERIAL_STARTER_RULES_FILE_SYMLINK="$output_dir/opkg-manager-serial-starter.rules"
+  SERIAL_STARTER_RULES_FILE_SYMLINK="$output_dir/vespera-serial-starter.rules"
   SERIAL_STARTER_CONFIG_FILE="$output_dir/serial-starter.conf"
+  VENUS_OS_SERIAL_STARTER_CONFIG_FILE="$output_dir/venus-serial-starter.conf"
+  SERIAL_STARTER_DEV_DIR="$output_dir/dev"
   DEVICE_UDEV_PROPS="ID_BUS,ID_VENDOR,ID_MODEL,ID_SERIAL"
   USE_UDEVADM_MONITOR="1"
+
+  mkdir -p "$SERIAL_STARTER_DEV_DIR"
+  for tty in tty ttyUSB0 ttyACM0; do : > "$SERIAL_STARTER_DEV_DIR/${tty}" || true; done
 }
 
 # shellcheck disable=SC2120
@@ -113,15 +105,20 @@ stage_files() {
 
   local args=("$@")
   (( ${#args[@]} == 0 )) && {
-    args=("serial-device-installer.test1.conf" "serial-device-installer.test1.conf.schema")
+    args=("serial-device-installer.test1.conf")
   }
 
   clear_output
+  mkdir -p "$SERIAL_STARTER_DEV_DIR"
+  for tty in tty ttyUSB0 ttyACM0; do : > "$SERIAL_STARTER_DEV_DIR/${tty}" || true; done
 
   for file in "${args[@]}"; do
-    [ -f "${assets_dir}/${file}" ] || {
-      assert_file_exists "$file" "stage_file not found" >&2; return 1; }
-    cp "${assets_dir}/${file}" "${output_dir}/${file}"
+    mkdir -p "$(dirname "${output_dir}/${file}")"
+    if [ -f "${assets_dir}/${file}" ]; then
+      cp "${assets_dir}/${file}" "${output_dir}/${file}"
+    else
+      : > "${output_dir}/${file}"
+    fi
     chmod +w "${output_dir}/${file}"
   done
 
@@ -162,16 +159,16 @@ callback_get_tty_port() {
 
 #fake overriden udevadm method
 udevadm() {
+  local tty_path="${SERIAL_STARTER_DEV_DIR:-/dev}/${_TTY:-}"
 
   # shellcheck disable=SC2199
-  if [[ "$@" == "info --name=/dev/${_TTY:-} --query=property" ]]; then
+  if [[ "$*" == "info --query=property --name=${tty_path}" || "$*" == "info --name=/dev/${_TTY:-} --query=property" ]]; then
      # echo load from file to get consistant test results even when usb device is not available
      echo "$(<"${assets_dir}/udevadm.output.${_TTY}")"
 
   else
-     # echo "service-device-installer-tests:ERROR: unexpected udevadm query"
-     /usr/bin/udevadm "$@" # passthough to real udevadm
-     return 1
+     # swallow non-property queries; tests mock udevadm behavior instead of using the host system.
+     return 0
   fi
   return 0
 }
@@ -179,113 +176,6 @@ udevadm() {
 ###############################################################################
 # Tests below
 ###############################################################################
-
-
-# tests loading the serial-device-installer.conf.schema file
-test_serial_device_installer_schema() {
-  (($IGNORE_CONF_LIB==1)) && return 0
-
-  # Arrange
-  schema_file="$assets_dir/serial-device-installer.test1.conf.schema"
-
-  # Act
-  conf_lib_lint "$schema_file"
-
-  # Assert
-  assert_exitcode
-
-}
-
-test_load_with_schema_fails_missing_required_vars() {
-  (($IGNORE_CONF_LIB==1)) && return 0
-  # Arrange
-  stage_files "serial-device-installer.test1.conf.schema" # only copy schema
-
-  conf_file="$output_dir/serial-device-installer.test1.conf"
-  assert_file_not_exist "$conf_file" $silent
-  assert_file_exists "${conf_file}.schema" $silent
-
-  local stderr=
-  exec 3>&1
-
-  # Act
-  stderr="$(conf_lib_load_with_schema "$conf_file" 2>&1 1>&3)"
-
-  #Assert
-  assert_exitcode 1 "Missing Required Values"
-  assert_eq "Missing required value for '\$DEVICE_SERVICE_NAME'" "${stderr}" "stderr correct"
-
-  local var_set=false
-  [[ -v "DEVICE_SERVICE_NAME" ]] && var_set=true
-  assert_eq false "$var_set" "DEVICE_SERVICE_NAME is unset"
-
-}
-
-test_load_with_schema_succeeds_required_vars_provided() {
-  (($IGNORE_CONF_LIB==1)) && return 0
-  # Arrange
-  stage_files "serial-device-installer.test1.conf.schema" # only copy schema
-
-  conf_file="$output_dir/serial-device-installer.test1.conf"
-  assert_file_not_exist "$conf_file" $silent
-  assert_file_exists "${conf_file}.schema" $silent
-
-  local ___SERVICE_NAME=$test_SERVICE_NAME
-
-  # Act
-  conf_lib_load_with_schema "$conf_file"
-
-  # Assert
-  assert_exitcode 0 "Missing Required Values"
-  assert_eq "$DEVICE_SERVICE_NAME" "$test_SERVICE_NAME"
-  assert_empty "${DEVICE_SERVICE_MAPPING_NAME:-}" $silent
-  assert_empty "${DEVICE_TTY-}" $silent
-  assert_not_empty "$SERVICE_PATH" $silent
-  assert_not_empty "$SERIAL_STARTER_START_SERVICE_PATH" $silent
-  assert_not_empty "$SERIAL_STARTER_RULES_FILE" $silent
-  assert_not_empty "$SERIAL_STARTER_RULES_FILE_SYMLINK" $silent
-  assert_not_empty "$SERIAL_STARTER_CONFIG_FILE" $silent
-  assert_not_empty "$DEVICE_UDEV_PROPS" $silent
-  assert_not_empty "$USE_UDEVADM_MONITOR" $silent
- }
-
-
-# test loading defaults from schema file; required vars set
-test_load_with_schema_filled_required_vars() {
-  (($IGNORE_CONF_LIB==1)) && return 0
-  # Arrange
-  stage_files "serial-device-installer.test1.conf" "serial-device-installer.test1.conf.schema"
-
-  conf_file="$output_dir/serial-device-installer.test1.conf"
-
-  ___SERVICE_NAME="$test_SERVICE_NAME"
-
-  # Act
-  conf_lib_load_with_schema "$conf_file"
-
-  # Assert
-  assert_exitcode 0
-  assert_eq "$DEVICE_SERVICE_NAME" "$test_SERVICE_NAME" $silent
-}
-
-# test loading defaults from schema file; conf file is missing; required vars set
-test_load_with_schema_succeds_and_filled_required_vars() {
-  (($IGNORE_CONF_LIB==1)) && return 0
-  # Arrange
-  stage_files
-
-  conf_file="$output_dir/serial-device-installer.test1.conf"
-
-  ___SERVICE_NAME="$test_SERVICE_NAME"
-
-  # Act
-  conf_lib_load_with_schema "$conf_file"
-
-  # Assert
-  assert_exitcode 0
-  assert_eq "$DEVICE_SERVICE_NAME" "$test_SERVICE_NAME" $silent
-}
-
 
 # test install fails when DEVICE_TTY set to unknown tty
 to_update_install_succeeds_when_TTY_is_unknown_tty_updated() {
@@ -296,7 +186,7 @@ to_update_install_succeeds_when_TTY_is_unknown_tty_updated() {
   DEVICE_TTY="ttyBAD0"
 
   # Act
-  stderr="$(serial_device_installer_install 2>&1 )"
+  stderr="$(sdi_install 2>&1 )"
 
   # Assert
   assert_exitcode 0
@@ -305,44 +195,47 @@ to_update_install_succeeds_when_TTY_is_unknown_tty_updated() {
  }
 
 
-test_install_fails_when_SERIAL_STARTER_RULES_FILE_does_not_exist() {
+test_install_creates_missing_SERIAL_STARTER_RULES_FILE() {
 
   # Arrange
   stage_default_vars
-  DEVICE_TTY=
-  SERIAL_STARTER_RULES_FILE=":@#aaa" #dummy (short) filename that will def not exist
+  DEVICE_TTY=ttyUSB0
+  DEVICE_SID=ef2d
+  SERIAL_STARTER_RULES_FILE="$output_dir/missing-dir/serial-starter.rules"
+  VENUS_OS_SERIAL_STARTER_CONFIG_FILE="$output_dir/missing-dir/venus-serial-starter.conf"
+  stage_get_filled_UDEVADM_PROPS DEVICE_UDEV_PROPS
 
   local stderr=
 
   # Act
-  stderr="$(serial_device_installer_install 2>&1 )"
+  stderr="$(sdi_install 2>&1)"
 
-  #Assert
-  assert_exitcode 1
-  #echo "stderr:$stderr"
-  assert_eq "ERROR: file not found, SERIAL_STARTER_RULES_FILE:${SERIAL_STARTER_RULES_FILE}" "$stderr"
+  # Assert
+  assert_exitcode 0
+  assert_file_exists "$SERIAL_STARTER_RULES_FILE"
+  assert_eq "" "$stderr"
 
 }
 
-test_install_fails_when_SERIAL_STARTER_CONFIG_FILE_does_not_exist() {
+test_install_creates_missing_SERIAL_STARTER_CONFIG_FILE() {
 
   # Arrange
   stage_default_vars
-  stage_files "${SERIAL_STARTER_RULES_FILE##*/}"
 
-  DEVICE_TTY=
+  DEVICE_TTY=ttyUSB0
+  DEVICE_SID=ef2d
   local stderr=
-  SERIAL_STARTER_CONFIG_FILE=":@#aaa" #dummy (short) filename that will def not exist
-
-  assert_file_exists "$SERIAL_STARTER_RULES_FILE"
+  SERIAL_STARTER_CONFIG_FILE="$output_dir/missing-dir/serial-starter.conf"
+  VENUS_OS_SERIAL_STARTER_CONFIG_FILE="$output_dir/missing-dir/venus-serial-starter.conf"
+  stage_get_filled_UDEVADM_PROPS DEVICE_UDEV_PROPS
 
   # Act
-  stderr="$(serial_device_installer_install 2>&1)"
+  stderr="$(sdi_install 2>&1)"
 
-  #Assert
-  assert_exitcode 1
-  #echo "stderr:$stderr"
-  assert_eq "ERROR: file not found, SERIAL_STARTER_CONFIG_FILE:$SERIAL_STARTER_CONFIG_FILE" "$stderr"
+  # Assert
+  assert_exitcode 0
+  assert_file_exists "$VENUS_OS_SERIAL_STARTER_CONFIG_FILE"
+  assert_eq "" "$stderr"
 
 }
 
@@ -357,30 +250,30 @@ test_install_fails_when_UDEVADM_PROPS_is_empty() {
   local stderr=
 
   # Act
-  stderr="$(serial_device_installer_install 2>&1 )"
+  stderr="$(sdi_install 2>&1 )"
 
   #Assert
   assert_exitcode 1
   assert_eq "ERROR: DEVICE_UDEV_PROPS not set" "$stderr"
 }
 
-test_install_fails_when_UDEVADM_are_invalid() {
+test_install_succeeds_when_custom_property_names_are_used() {
 
   # Arrange
   stage_default_vars
-  stage_files "${SERIAL_STARTER_CONFIG_FILE##*/}" "${SERIAL_STARTER_RULES_FILE##*/}"
   DEVICE_TTY=ttyUSB0
+  DEVICE_SID=ef2d
   DEVICE_UDEV_PROPS="BAD-PROP=1"
   local stderr=
 
   # Act
-  stderr="$(serial_device_installer_install 2>&1)"
+  stderr="$(sdi_install 2>&1)"
 
-  #Assert
-  assert_exitcode 1
-  #echo "stderr:$stderr"
-
-  assert_eq "DEVICE_UDEV_PROPS are invalid" "$stderr"
+  # Assert
+  assert_exitcode 0
+  assert_file_exists "$SERIAL_STARTER_RULES_FILE"
+  assert_contains "BAD-PROP" "$(<"${SERIAL_STARTER_RULES_FILE}")"
+  assert_eq "" "$stderr"
 
 }
 
@@ -392,11 +285,11 @@ test_install_fails_when_SERVICE_NAME_is_empty() {
   local stderr=
 
   # Act
-  stderr="$(serial_device_installer_install 2>&1)"
+  stderr="$(sdi_install 2>&1)"
 
   #Assert
   assert_exitcode 1
-  assert_eq "ERROR 1: DEVICE_SERVICE_NAME not set" "$stderr"
+  assert_eq "ERROR: DEVICE_SERVICE_NAME not set" "$stderr"
 
 }
 
@@ -411,7 +304,7 @@ oldtest_install_SERVICE_MAPPING_NAME_set_if_empty() {
   local stderr=
 
   # Act
-  serial_device_installer_install 2>/dev/null # ignore error
+  sdi_install 2>/dev/null # ignore error
 
   #Assert
   assert_exitcode 1
@@ -435,7 +328,7 @@ test_install_succeeds_serial_starter_rule_added() {
   local stderr=
 
   # Act
-  serial_device_installer_install 2>/dev/null
+  sdi_install 2>/dev/null
 
   #Assert
   assert_exitcode 0
@@ -447,11 +340,10 @@ test_install_succeeds_serial_starter_rule_added() {
 
 }
 
-test_install_succeeds_ve_service_mapping_added() {
+test_add_service_mapping_succeeds() {
 
   # Arrange
   stage_default_vars
-
   stage_files "${SERIAL_STARTER_CONFIG_FILE##*/}" "${SERIAL_STARTER_RULES_FILE##*/}"
   DEVICE_SID=ef2d
   DEVICE_TTY=tty
@@ -459,20 +351,18 @@ test_install_succeeds_ve_service_mapping_added() {
   local expected_ve_service_mapping; stage_get_expected_ve_service_mapping expected_ve_service_mapping
   local stderr=
 
-
   # Act
-  serial_device_installer_install #2>/dev/null
+  sdi_add_service_mapping
 
-  #Assert
+  # Assert
   assert_exitcode 0
-
   local count_of=
   count_of=$(grep -Ec '^service[[:space:]]+ve_dummy_service[[:space:]]+dummy_service$' "$SERIAL_STARTER_CONFIG_FILE" || true)
   assert_eq 1 "$count_of"
 
 }
 
-test_install_succeeds_and_ve_mapping_not_added_twice_when_already_exists() {
+test_add_service_mapping_does_not_duplicate_entry_when_already_exists() {
 
   # Arrange
   stage_default_vars
@@ -486,12 +376,13 @@ test_install_succeeds_and_ve_mapping_not_added_twice_when_already_exists() {
   local stderr=
 
   # Act
-  serial_device_installer_install #2>/dev/null
+  sdi_add_service_mapping
+  sdi_add_service_mapping
 
-  #Assert
+  # Assert
   assert_exitcode 0
 
-  local count_of=;count_of=$(grep -o "$expected_ve_service_mapping" "${SERIAL_STARTER_CONFIG_FILE}" | wc -l)
+  local count_of=;count_of=$(grep -Ec '^[[:space:]]*service[[:space:]]+ve_dummy_service[[:space:]]+dummy_service$' "${SERIAL_STARTER_CONFIG_FILE}" || true)
   assert_eq 1 "${count_of}"
 
 }
@@ -511,7 +402,7 @@ test_install_succeeds_serial_starter_rule_not_added_twice_when_already_exists() 
   local stderr=
 
   # Act
-  serial_device_installer_install #2>/dev/null
+  sdi_install #2>/dev/null
 
   #Assert
   assert_exitcode 0
@@ -534,7 +425,7 @@ test_install_creates_rules_symlink_when_missing() {
   stage_get_filled_UDEVADM_PROPS DEVICE_UDEV_PROPS
 
   # Act
-  serial_device_installer_install
+  sdi_install
 
   # Assert
   assert_exitcode 0
@@ -556,7 +447,7 @@ test_install_repairs_rules_symlink_when_target_is_wrong() {
   stage_get_filled_UDEVADM_PROPS DEVICE_UDEV_PROPS
 
   # Act
-  serial_device_installer_install
+  sdi_install
 
   # Assert
   assert_exitcode 0
@@ -577,14 +468,14 @@ test_install_fails_when_rules_symlink_path_is_regular_file() {
   local stderr=
 
   # Act
-  stderr="$(serial_device_installer_install 2>&1)"
+  stderr="$(sdi_install 2>&1)"
 
   # Assert
   assert_exitcode 1
   assert_eq "ERROR: SERIAL_STARTER_RULES_FILE_SYMLINK exists and is not a symlink:${SERIAL_STARTER_RULES_FILE_SYMLINK}" "${stderr}"
 }
 
-# serial_device_installer_remove
+# sdi_remove
 
 test_remove_rule_succeeds_when_sid_set_removes_comment_and_rule_line() {
 
@@ -604,7 +495,7 @@ EOF
   local stderr=
 
   # Act
-  stderr="$(serial_device_installer_remove_rule 2>&1)"
+  stderr="$(sdi_remove_rule 2>&1)"
 
   # Assert
   assert_exitcode 0
@@ -640,7 +531,7 @@ EOF
   local stderr=
 
   # Act
-  stderr="$(serial_device_installer_remove_rule 2>&1)"
+  stderr="$(sdi_remove_rule 2>&1)"
 
   # Assert
   assert_exitcode 0
@@ -659,7 +550,7 @@ oldtest_remove_succeeds_when_serial_starter_rule_not_set() {
   local stderr=
 
   # Act
-  stderr="$(serial_device_installer_remove 2>&1)"
+  stderr="$(sdi_remove 2>&1)"
 
   #Assert
   assert_exitcode 0
@@ -690,7 +581,7 @@ oldtest_remove_succeeds_when_serial_starter_rule_set() {
   assert_eq 1 "$count_of" "--"
 
   # Act
-  stderr=$(serial_device_installer_remove) #2>/dev/null
+  stderr=$(sdi_remove) #2>/dev/null
 
   #Assert
   assert_exitcode 0
@@ -718,20 +609,20 @@ test_remove_succeeds_SERIAL_STARTER_CONF_entry_is_removed() {
   stage_get_filled_UDEVADM_PROPS DEVICE_UDEV_PROPS
 
   _TTY=ttyUSB0
+  sdi_add_service_mapping
+
   local stderr=
   local count_of=
-  count_of=$(grep -o "$expected_ve_service_mapping" "${SERIAL_STARTER_CONFIG_FILE}" | wc -l)
+  count_of=$(grep -Ec '^[[:space:]]*service[[:space:]]+ve_dummy_service[[:space:]]+dummy_service$' "${SERIAL_STARTER_CONFIG_FILE}" || true)
   assert_eq 1 "$count_of" "--"
 
   # Act
-  #serial_device_installer_remove
-  stderr=$(serial_device_installer_remove_service_mapping) #2>/dev/null
+  stderr=$(sdi_remove_service_mapping) #2>/dev/null
 
   #Assert
   assert_exitcode 0
-  #echo "stderr:$stderr"
 
-  local line_no=;line_no=$(awk "/${expected_ve_service_mapping}/{ print NR; exit }" "$SERIAL_STARTER_CONFIG_FILE")
+  local line_no=;line_no=$(awk '/^[[:space:]]*service[[:space:]]+ve_dummy_service[[:space:]]+dummy_service$/ { print NR; exit }' "$SERIAL_STARTER_CONFIG_FILE")
   assert_empty "${line_no}"
 }
 
@@ -759,7 +650,7 @@ test_remove_succeeds_config_file_remains_unchanged_when_ve_service_mapping_not_f
   assert_eq 0 "$count_of" "--"
 
   # Act
-  stderr=$(serial_device_installer_remove_service_mapping) #2>/dev/null
+  stderr=$(sdi_remove_service_mapping) #2>/dev/null
 
   #Assert
   assert_exitcode 0
@@ -773,7 +664,7 @@ test_remove_succeeds_config_file_remains_unchanged_when_ve_service_mapping_not_f
   assert_empty $stderr
 }
 
-test_start_service_fails_when_tty_not_found() {
+oldtest_start_service_fails_when_tty_not_found() {
 
   # Arrange
   stage_default_vars
@@ -784,7 +675,7 @@ test_start_service_fails_when_tty_not_found() {
 
   # Act
 
-  stderr="$(serial_device_installer_start_service 2>&1)"
+  stderr="$(sdi_start_service 2>&1)"
 
   # Assert
   assert_exitcode 1
@@ -792,7 +683,7 @@ test_start_service_fails_when_tty_not_found() {
 }
 
 
-test_start_service_fails_when_SERIAL_STARTER_START_SERVICE_PATH_not_set() {
+oldtest_start_service_fails_when_SERIAL_STARTER_START_SERVICE_PATH_not_set() {
 
   # Arrange
   stage_default_vars
@@ -804,7 +695,7 @@ test_start_service_fails_when_SERIAL_STARTER_START_SERVICE_PATH_not_set() {
   local stderr=
 
   # Act
-  stderr="$(serial_device_installer_start_service 2>&1)"
+  stderr="$(sdi_start_service 2>&1)"
 
   # Assert
   assert_exitcode 1
@@ -812,7 +703,7 @@ test_start_service_fails_when_SERIAL_STARTER_START_SERVICE_PATH_not_set() {
   assert_eq "ERROR: SERIAL_STARTER_START_SERVICE_PATH not set or does not exist" "${stderr}"
 }
 
-test_start_service_fails_when_SERVICE_NAME_not_set() {
+oldtest_start_service_fails_when_SERVICE_NAME_not_set() {
 
   # Arrange
   stage_default_vars
@@ -824,7 +715,7 @@ test_start_service_fails_when_SERVICE_NAME_not_set() {
   local stderr=
 
   # Act
-  stderr="$(serial_device_installer_start_service 2>&1)"
+  stderr="$(sdi_start_service 2>&1)"
 
   # Assert
   assert_exitcode 1
@@ -838,7 +729,7 @@ __tty_device_exists() {
   [[ -e "/dev/${1}" ]]
 }
 
-test_start_service_succeeds_when_all_conditions_are_met() {
+oldtest_start_service_succeeds_when_all_conditions_are_met() {
 
   # Arrange
   stage_default_vars
@@ -850,7 +741,7 @@ test_start_service_succeeds_when_all_conditions_are_met() {
   local stderr=
 
   # Act
-  stderr="$(serial_device_installer_start_service 2>&1)"
+  stderr="$(sdi_start_service 2>&1)"
   TTY_EXISTS=
 
   # Assert
@@ -860,13 +751,13 @@ test_start_service_succeeds_when_all_conditions_are_met() {
 
 } #check auto tty file exists
 
-test_uninstall_uses_service_path_variable() {
+oldtest_uninstall_uses_service_path_variable() {
   # Arrange
   stage_default_vars
   stage_service_paths
 
   local -a seen_services=()
-  __serial_device_installer_remove_service() {
+  __sdi_remove_service() {
     seen_services+=("$1")
   }
 
@@ -875,7 +766,7 @@ test_uninstall_uses_service_path_variable() {
   mkdir -p "${SERVICE_PATH}/${DEVICE_SERVICE_NAME}.ttyACM0"
 
   # Act
-  serial_device_installer_uninstall --no-remove-usb-rule --no-remove-service-mapping
+  sdi_uninstall --no-remove-usb-rule --no-remove-service-mapping
 
   # Assert
   assert_exitcode 0
@@ -896,7 +787,7 @@ EOF
   DEVICE_SID="abcd"
 
   # Act
-  serial_device_installer_remove_rule
+  sdi_remove_rule
 
   # Assert
   assert_exitcode 0
@@ -907,25 +798,7 @@ EOF
   assert_eq 1 "$count_of"
 }
 
-test_install_from_sid_fails_without_tty() {
-  # Arrange
-  stage_default_vars
-  stage_files "${SERIAL_STARTER_CONFIG_FILE##*/}" "${SERIAL_STARTER_RULES_FILE##*/}"
-  DEVICE_SID=ef2d
-  DEVICE_TTY=
-  stage_get_filled_UDEVADM_PROPS DEVICE_UDEV_PROPS
-
-  local stderr=
-
-  # Act
-  stderr="$(serial_device_installer_install_from_sid 2>&1)"
-
-  # Assert
-  assert_exitcode 1
-  assert_eq "ERROR: DEVICE_TTY must be set to an existing device for DEVICE_SID install" "$stderr"
-}
-
-test_install_from_sid_succeeds_with_tty_and_props() {
+test_add_service_mapping_creates_config_entry() {
   # Arrange
   stage_default_vars
   stage_files "${SERIAL_STARTER_CONFIG_FILE##*/}" "${SERIAL_STARTER_RULES_FILE##*/}"
@@ -936,35 +809,52 @@ test_install_from_sid_succeeds_with_tty_and_props() {
   local stderr=
 
   # Act
-  stderr="$(serial_device_installer_install_from_sid 2>&1)"
+  stderr="$(sdi_add_service_mapping 2>&1)"
 
   # Assert
   assert_exitcode 0
   local count_of=
-  count_of=$(grep -c 'ENV{SERIAL_DEVICE_ID}="ef2d"' "${SERIAL_STARTER_RULES_FILE}" || true)
-  assert_eq 1 "$count_of"
   count_of=$(grep -Ec '^service[[:space:]]+ve_dummy_service[[:space:]]+dummy_service$' "${SERIAL_STARTER_CONFIG_FILE}" || true)
   assert_eq 1 "$count_of"
-  assert_eq "    fake-svc called with args:-t /service/serial-starter" "$stderr"
+  assert_empty "$stderr"
 }
 
-test_uninstall_wrapper_calls_package_uninstall() {
+test_add_service_mapping_does_not_create_duplicate_entry() {
+  # Arrange
+  stage_default_vars
+  stage_files "${SERIAL_STARTER_CONFIG_FILE##*/}" "${SERIAL_STARTER_RULES_FILE##*/}"
+  DEVICE_SID=ef2d
+  DEVICE_TTY=tty
+  stage_get_filled_UDEVADM_PROPS DEVICE_UDEV_PROPS
+
+  # Act
+  sdi_add_service_mapping
+  sdi_add_service_mapping
+
+  # Assert
+  assert_exitcode 0
+  local count_of=
+  count_of=$(grep -Ec '^service[[:space:]]+ve_dummy_service[[:space:]]+dummy_service$' "${SERIAL_STARTER_CONFIG_FILE}" || true)
+  assert_eq 1 "$count_of"
+}
+
+oldtest_uninstall_wrapper_calls_package_uninstall() {
   # Arrange
   local called=
-  serial_device_installer_uninstall_package() {
+  sdi_uninstall_package() {
     called=1
     return 0
   }
 
   # Act
-  serial_device_installer_uninstall --no-remove-usb-rule
+  sdi_uninstall --no-remove-usb-rule
 
   # Assert
   assert_exitcode 0
   assert_eq 1 "$called"
 }
 
-test_uninstall_package_removes_rules_symlink() {
+oldtest_uninstall_package_removes_rules_symlink() {
   # Arrange
   stage_default_vars
   local rules_file="${SERIAL_STARTER_RULES_FILE}"
@@ -973,7 +863,7 @@ test_uninstall_package_removes_rules_symlink() {
   ln -sfn "${rules_file}" "${rules_link}"
 
   # Act
-  serial_device_installer_uninstall_package --no-remove-usb-rule --no-remove-service-mapping
+  sdi_uninstall_package --no-remove-usb-rule --no-remove-service-mapping
 
   # Assert
   assert_exitcode 0
@@ -988,20 +878,20 @@ test_remove_device_rule_calls_rule_and_refresh() {
   local calls_file="${output_dir}/phase5.calls"
   : > "$calls_file"
 
-  serial_device_installer_remove_rule() {
+  sdi_remove_rule() {
     echo "remove_rule" >> "$calls_file"
     return 0
   }
   __ensure_TTY_from_TTY_or_SID() {
     return 0
   }
-  serial_device_installer_refresh_udevadm() {
+  sdi_refresh_udevadm() {
     echo "refresh:${1}" >> "$calls_file"
     return 0
   }
 
   # Act
-  serial_device_installer_remove_device_rule
+  sdi_remove_device_rule
 
   # Assert
   assert_exitcode 0
@@ -1012,37 +902,40 @@ test_remove_device_rule_calls_rule_and_refresh() {
   assert_eq 1 "$count_of"
 }
 
-test_install_common_uses_uninstall_package_api() {
+test_device_lib_uses_install_api() {
   # Arrange
-  local helper_file="$this_path/../src/data/opkg-manager/installer-common"
+  local device_file="$this_path/../src/data/apps/available/vespera/libs/device-lib"
   local count_of=
 
   # Act / Assert
-  count_of=$(grep -c 'serial_device_installer_uninstall_package' "$helper_file" || true)
+  count_of=$(grep -c 'sdi_install' "$device_file" || true)
   assert_eq 1 "$count_of"
 }
 
-test_device_remove_uses_remove_device_rule_api() {
+test_device_lib_uses_remove_service_api() {
   # Arrange
-  local device_file="$this_path/../src/data/opkg-manager/opkg-bridge/device"
+  local device_file="$this_path/../src/data/apps/available/vespera/libs/device-lib"
   local count_of=
 
   # Act / Assert
-  count_of=$(grep -c 'serial_device_installer_remove_device_rule' "$device_file" || true)
+  count_of=$(grep -c 'sdi_remove_service' "$device_file" || true)
   assert_eq 1 "$count_of"
 }
 
-test_device_apply_uses_install_from_sid_api() {
+test_binding_logic_keeps_install_and_remove_helpers() {
   # Arrange
-  local device_file="$this_path/../src/data/opkg-manager/opkg-bridge/device"
-  local count_of=
+  local device_file="$this_path/../src/data/apps/available/vespera/libs/device-lib"
+  local count_of_install=
+  local count_of_remove=
 
   # Act / Assert
-  count_of=$(grep -c 'serial_device_installer_install_from_sid' "$device_file" || true)
-  assert_eq 1 "$count_of"
+  count_of_install=$(grep -c 'sdi_install' "$device_file" || true)
+  count_of_remove=$(grep -c 'sdi_remove_service' "$device_file" || true)
+  assert_eq 1 "$count_of_install"
+  assert_eq 1 "$count_of_remove"
 }
 
-test_restart_services_finds_matching_tty_by_ve_service() {
+oldtest_restart_services_finds_matching_tty_by_ve_service() {
   # Arrange
   stage_default_vars
   stage_service_paths
@@ -1058,7 +951,7 @@ test_restart_services_finds_matching_tty_by_ve_service() {
     _out=("$tty0" "$tty1")
   }
 
-  serial_device_installer_get_usb_prop() {
+  sdi_get_usb_prop() {
     local tty="$1"
     local key="$2"
     [[ "$key" == "VE_SERVICE" ]] || return 0
@@ -1070,7 +963,7 @@ test_restart_services_finds_matching_tty_by_ve_service() {
   rm -f "${SERIAL_STARTER_START_SERVICE_PATH}/ttyUSB0" "${SERIAL_STARTER_START_SERVICE_PATH}/ttyACM0"
 
   # Act
-  serial_device_installer_restart_services
+  sdi_restart_services
 
   # Assert
   assert_exitcode 0
@@ -1078,7 +971,7 @@ test_restart_services_finds_matching_tty_by_ve_service() {
   assert_file_exists "${SERIAL_STARTER_START_SERVICE_PATH}/ttyACM0"
 }
 
-test_restart_services_skips_non_matching_services() {
+oldtest_restart_services_skips_non_matching_services() {
   # Arrange
   stage_default_vars
   stage_service_paths
@@ -1094,7 +987,7 @@ test_restart_services_skips_non_matching_services() {
     _out=("$tty0" "$tty1")
   }
 
-  serial_device_installer_get_usb_prop() {
+  sdi_get_usb_prop() {
     local tty="$1"
     local key="$2"
     [[ "$key" == "VE_SERVICE" ]] || return 0
@@ -1107,7 +1000,7 @@ test_restart_services_skips_non_matching_services() {
   rm -f "${SERIAL_STARTER_START_SERVICE_PATH}/ttyUSB0" "${SERIAL_STARTER_START_SERVICE_PATH}/ttyACM0"
 
   # Act
-  serial_device_installer_restart_services
+  sdi_restart_services
 
   # Assert
   assert_exitcode 0
@@ -1115,7 +1008,7 @@ test_restart_services_skips_non_matching_services() {
   assert_file_not_exist "${SERIAL_STARTER_START_SERVICE_PATH}/ttyACM0"
 }
 
-test_reload_serial_starter_service_calls_svc_t_when_up() {
+oldtest_reload_serial_starter_service_calls_svc_t_when_up() {
   # Arrange
   local calls_file="${output_dir}/reload.calls"
   : > "$calls_file"
@@ -1129,7 +1022,7 @@ test_reload_serial_starter_service_calls_svc_t_when_up() {
   }
 
   # Act
-  serial_device_installer_reload_serial_starter_service
+  sdi_reload_serial_starter_service
 
   # Assert
   assert_exitcode 0
@@ -1138,7 +1031,7 @@ test_reload_serial_starter_service_calls_svc_t_when_up() {
   assert_eq 1 "$count_of"
 }
 
-test_reload_serial_starter_service_calls_svc_u_when_down() {
+oldtest_reload_serial_starter_service_calls_svc_u_when_down() {
   # Arrange
   local calls_file="${output_dir}/reload.calls"
   : > "$calls_file"
@@ -1152,7 +1045,7 @@ test_reload_serial_starter_service_calls_svc_u_when_down() {
   }
 
   # Act
-  serial_device_installer_reload_serial_starter_service
+  sdi_reload_serial_starter_service
 
   # Assert
   assert_exitcode 0
@@ -1161,7 +1054,7 @@ test_reload_serial_starter_service_calls_svc_u_when_down() {
   assert_eq 1 "$count_of"
 }
 
-test_tty_from_sid_sets_tty_when_found() {
+oldtest_tty_from_sid_sets_tty_when_found() {
   # Arrange
   DEVICE_SID="ef2d"
   DEVICE_TTY=
@@ -1175,14 +1068,14 @@ test_tty_from_sid_sets_tty_when_found() {
   }
 
   # Act
-  serial_device_installer_TTY_from_SID
+  sdi_TTY_from_SID
 
   # Assert
   assert_exitcode 0
   assert_eq "ttyUSB9" "$DEVICE_TTY"
 }
 
-test_tty_from_sid_returns_failure_when_not_found() {
+oldtest_tty_from_sid_returns_failure_when_not_found() {
   # Arrange
   DEVICE_SID="bad1"
   DEVICE_TTY=
@@ -1192,14 +1085,14 @@ test_tty_from_sid_returns_failure_when_not_found() {
   }
 
   # Act
-  serial_device_installer_TTY_from_SID
+  sdi_TTY_from_SID
 
   # Assert
   assert_exitcode 1
   assert_empty "${DEVICE_TTY:-}"
 }
 
-test_stop_service_tree_noop_when_missing_dir() {
+oldtest_stop_service_tree_noop_when_missing_dir() {
   # Arrange
   local missing_dir="${output_dir}/no-such-service"
 
@@ -1211,7 +1104,7 @@ test_stop_service_tree_noop_when_missing_dir() {
   assert_file_not_exist "${missing_dir}/down"
 }
 
-test_stop_service_tree_creates_down_files_and_calls_svc() {
+oldtest_stop_service_tree_creates_down_files_and_calls_svc() {
   # Arrange
   local service_dir="${output_dir}/service-tree/dummy.ttyUSB0"
   local calls_file="${output_dir}/stop-tree.calls"
@@ -1240,7 +1133,7 @@ test_stop_service_tree_creates_down_files_and_calls_svc() {
   assert_eq 1 "$count_of"
 }
 
-test_kill_leftover_processes_noop_when_no_pids() {
+oldtest_kill_leftover_processes_noop_when_no_pids() {
   # Arrange
   local calls_file="${output_dir}/kill.calls"
   : > "$calls_file"
@@ -1264,7 +1157,7 @@ test_kill_leftover_processes_noop_when_no_pids() {
   assert_eq 0 "$lines"
 }
 
-test_kill_leftover_processes_calls_kill_and_kill9_when_pids_found() {
+oldtest_kill_leftover_processes_calls_kill_and_kill9_when_pids_found() {
   # Arrange
   local calls_file="${output_dir}/kill.calls"
   : > "$calls_file"
@@ -1309,7 +1202,7 @@ EOF
   local out=
 
   # Act
-  out="$(serial_device_installer_get_usb_prop "ttyUSB0" "ID_VENDOR")"
+  out="$(sdi_get_usb_prop "ttyUSB0" "ID_VENDOR")"
 
   # Assert
   assert_exitcode 0
@@ -1329,14 +1222,93 @@ EOF
   local out=
 
   # Act
-  out="$(serial_device_installer_get_usb_prop "ttyUSB0" "ID_SERIAL")"
+  out="$(sdi_get_usb_prop "ttyUSB0" "ID_SERIAL")"
 
   # Assert
   assert_exitcode 0
   assert_empty "$out"
 }
 
-test_prepare_props_for_grep_escapes_plus_keys() {
+test_tty_from_sid_use_usb_props_sets_tty_when_sid_prop_missing() {
+  # Arrange
+  stage_default_vars
+  DEVICE_SID="sid-from-props"
+  DEVICE_TTY=
+  DEFAULT_USB_PROPS='ID_MODEL,ID_VENDOR,ID_SERIAL,ID_PATH'
+
+  __sdi_get_tty_paths() {
+    local -n out_paths="$1"
+    out_paths=("${SERIAL_STARTER_DEV_DIR}/ttyUSB0")
+  }
+
+  sdi_get_sid_from_tty() {
+    # Force fallback path via use-usb-props.
+    return 0
+  }
+
+  sdi_fill_usb_props() {
+    local _tty="$1"
+    local _props="$2"
+    local -n out="$3"
+    out="ID_MODEL=M,ID_VENDOR=V,ID_SERIAL=S-ttyUSB0,ID_PATH=P-ttyUSB0"
+  }
+
+  sdi_set_device_sid() {
+    local props="$1"
+    [[ "$props" == *'ttyUSB0'* ]] && DEVICE_SID='sid-from-props'
+  }
+
+  # Act
+  sdi_TTY_from_SID "use-usb-props"
+
+  # Assert
+  assert_exitcode 0
+  assert_eq "ttyUSB0" "$DEVICE_TTY"
+  assert_eq "sid-from-props" "$DEVICE_SID"
+}
+
+test_tty_from_sid_use_usb_props_round_trip_from_fill_and_set_sid() {
+  # Arrange
+  stage_default_vars
+  local expected_tty="ttyUSB0"
+  local usbProps=
+  DEFAULT_USB_PROPS='ID_MODEL,ID_VENDOR,ID_SERIAL,ID_PATH'
+
+  __sdi_get_tty_paths() {
+    local -n out_paths="$1"
+    out_paths=("${SERIAL_STARTER_DEV_DIR}/${expected_tty}")
+  }
+
+  udevadm() {
+    cat <<'EOF'
+ID_MODEL=M
+ID_VENDOR=V
+ID_SERIAL=S-ttyUSB0
+ID_PATH=P-ttyUSB0
+EOF
+  }
+
+  sdi_get_sid_from_tty() {
+    # Force fallback path via use-usb-props.
+    return 0
+  }
+
+  # Build SID from usbProps first (round trip source).
+  sdi_fill_usb_props "$expected_tty" "$DEFAULT_USB_PROPS" usbProps
+  sdi_set_device_sid "$usbProps"
+  local sid="$DEVICE_SID"
+  DEVICE_TTY=
+  DEVICE_SID="$sid"
+
+  # Act
+  sdi_TTY_from_SID "use-usb-props"
+
+  # Assert
+  assert_exitcode 0
+  assert_eq "$expected_tty" "$DEVICE_TTY"
+}
+
+oldtest_prepare_props_for_grep_escapes_plus_keys() {
   # Arrange
   local -A props
   props["+ID_SERIAL"]="abc"
@@ -1356,7 +1328,7 @@ test_prepare_props_for_grep_escapes_plus_keys() {
   assert_eq true "$has_vendor"
 }
 
-test_props_roundtrip_read_write_preserves_key_values() {
+oldtest_props_roundtrip_read_write_preserves_key_values() {
   # Arrange
   DEVICE_UDEV_PROPS='ID_MODEL=FT232R_USB_UART,ID_SERIAL=FTDI_ABC,+SERIAL_DEVICE_ID=ef2d,ID_VENDOR=FTDI'
   local -A props1

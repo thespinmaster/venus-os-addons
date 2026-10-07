@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+
+__vespera_path="$(dirname "${BASH_SOURCE[0]}")"
+__vespera_path="$(cd "${__vespera_path}/.." && pwd)"
+
+# shellcheck source="../conf-default/vespera.conf"
+source "$__vespera_path/conf/vespera.conf"
+
+__list_overlays_for_app() {
+	"$VESPERA_DATA_DIR/info/vespera.overlay-lib" overlay-list-mounts "$VESPERA_DATA_DIR/info/$app.$VESPERA_OVERLAYS_FILE"
+}
+
+__list_service_status() {
+	# shellcheck disable=SC2034
+	local -n __template_services="${1}"
+
+	shift 1
+	shopt -s globstar nullglob
+
+	for app in $(opkg_lib_list_packages "all"); do
+
+		[[ "$#" -eq 0 ]] || [[ " $* " == *" $app "* ]] || continue
+		local file="$VESPERA_DATA_DIR/info/${app}.${VESPERA_APP_SERVICES_FILE}"
+		for service in $(cat "$file"); do
+			[[ ! -e $service ]] && echo "$service not available"
+			svstat "/service/$service"
+		done
+
+		local file="$VESPERA_DATA_DIR/info/${app}.${VESPERA_APP_TEMPLATE_SERVICES_FILE}"
+
+		for service in $(cat "$file"); do
+			local found=0
+			for tty_service in "/service/$service.tty"*; do
+				[[ ! -e $tty_service ]] && continue
+				svstat "$tty_service"
+				__template_services+=$tty_service
+				found=1
+			done
+			[[ "$found" == 0 ]] && echo ": service template not in use - $service"
+		done
+	done
+}
+
+__get_gui_v2_addon() {
+	local app="${1}"
+
+	if [[ -f "/data/apps/enabled/$app/gui-v2/$app.json" ]]; then
+		echo "${app} (enabled)"
+	elif [[ -f "/data/apps/available/$app/gui-v2/$app.json" ]]; then
+		echo "${app} (available)"
+	fi
+}
+
+__print_section() {
+	[[ -n "$info" ]] || return
+	echo "${1}"
+	echo "$info" | sed 's/^/      /'
+}
+
+__list_dbus_settings() {
+	local app="${1}"
+	local -n __template_service_paths="${2}"
+	local info=
+	local dbus_service=
+
+	local dbus_name; dbus_name=$(cat "$VESPERA_DATA_DIR/info/${app}.${VESPERA_DBUS_NAME}")
+	[[ -z $dbus_name ]] && dbus_name="$app"
+
+	for dbus_service in $(dbus -y | grep -i "$dbus_name"); do
+		info+="- $dbus_service"$'\n'
+		info+="$(dbus -y "$dbus_service" / GetValue \ | sed 's/[{}]//g' | sed -E 's/,[[:space:]]*$//')"
+	done
+
+	for template_service_path in "${__template_service_paths[@]}"; do
+		template_service="${template_service_path##*/}"
+		dbus_service=$(dbus -y | grep -im1 "$template_service" | sort)
+		[[ -z $dbus_service ]] && continue
+		info+="- $dbus_service"$'\n'
+		info+="$( dbus -y "$dbus_service" / GetValue | sed -E 's/,[[:space:]]*$//')"
+	done
+	__print_section "  - Dbus Services"
+
+	info="$(dbus -y "com.victronenergy.settings" "/Settings/Vespera" GetValue | \
+		grep "$dbus_name" | sed 's/[{}]//g' | sed -E 's/,[[:space:]]*$//' | sort)"
+	__print_section "  - Dbus Settings: /Settings"
+	info=
+
+	for sid in $("$__vespera_path/scripts/list-device-bindings" "$dbus_name"); do
+		info="$(dbus -y "com.victronenergy.settings" "/Settings/Devices/sid_$sid" GetValue \
+			| sed 's/[{}]//g' | sed -E 's/,[[:space:]]*$//' | sort)"
+		__print_section "  - Dbus Device Settings: /Settings/Devices/sid_$sid"
+	done
+
+}
+
+declare info=
+for app in $(opkg_lib_list_packages "all"); do
+	echo "$app"
+	[[ "$#" -eq 0 ]] || [[ " $* " == *" $app "* ]] || continue
+	[[ -n $info ]] && echo
+	info=
+	[[ -e /data/apps/enabled/$app ]] && echo "$app - enabled" || echo "$app - not enabled"
+
+	# shellcheck disable=SC2034
+	declare -a template_service_paths=()
+
+	info=$(__list_service_status template_service_paths "$app")
+	__print_section "  - Services"
+
+	info="$(__get_gui_v2_addon "$app")"
+	__print_section "  - Addons"
+
+	__list_dbus_settings "$app" template_service_paths
+
+	info=$(__list_overlays_for_app "$app")
+	__print_section "  - Overlays"
+
+	info=1
+done

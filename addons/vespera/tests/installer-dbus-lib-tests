@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_root="$this_path/../src/data/apps/available/vespera"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+
+TEST_ROOT=
+TEST_APP_ROOT=
+DBUS_GET_VALUE='[]'
+
+stage_installer_dbus_runtime() {
+  TEST_ROOT="$(vt_make_test_root)"
+  TEST_APP_ROOT="$TEST_ROOT/app/vespera"
+
+  mkdir -p "$TEST_APP_ROOT/libs" "$TEST_ROOT/work"
+
+  cp "$source_root/libs/source-lib" "$TEST_APP_ROOT/libs/source-lib"
+  cp "$source_root/libs/installer-dbus-lib" "$TEST_APP_ROOT/libs/installer-dbus-lib"
+  cp "$source_root/libs/json-lib" "$TEST_APP_ROOT/libs/json-lib"
+
+  cat > "$TEST_APP_ROOT/libs/dbus-lib" <<'EOF'
+#!/usr/bin/env bash
+
+dbus_lib_add_settings() {
+  cat > "$TEST_ROOT/add_settings.last"
+}
+
+dbus_lib_remove_settings() {
+  cat > "$TEST_ROOT/remove_settings.last"
+}
+
+dbus_lib_get_value() {
+  local _path="$1"
+  local -n _out="$2"
+  _out="$DBUS_GET_VALUE"
+  return 0
+}
+
+dbus_lib_set_string_value() {
+  local path="$1"
+  local value="$2"
+  printf '%s|%s\n' "$path" "$value" >> "$TEST_ROOT/set_string.log"
+  return 0
+}
+EOF
+
+  chmod +x "$TEST_APP_ROOT/libs/source-lib" "$TEST_APP_ROOT/libs/installer-dbus-lib" "$TEST_APP_ROOT/libs/json-lib" "$TEST_APP_ROOT/libs/dbus-lib"
+
+  : > "$TEST_ROOT/set_string.log"
+  : > "$TEST_ROOT/add_settings.last"
+  : > "$TEST_ROOT/remove_settings.last"
+}
+
+cleanup_installer_dbus_runtime() {
+  [[ -n "${TEST_ROOT:-}" ]] && vt_safe_rm_rf "$TEST_ROOT"
+}
+
+load_installer_dbus_lib() {
+  # shellcheck disable=SC1090
+  source "$TEST_APP_ROOT/libs/installer-dbus-lib"
+}
+
+test_installer_dbus_lib_build_manifest_includes_expected_entries() {
+  stage_installer_dbus_runtime
+  load_installer_dbus_lib
+
+  local manifest="$TEST_ROOT/work/manifest.jsonl"
+
+  installer_dbus_lib_build_manifest \
+    "$manifest" \
+    'demo' \
+    '{"path":"/Settings/Base","default":"x"}' \
+    'ovA=PageA ovB=PageB' \
+    'menuA=MenuA' \
+    $'svcA=Display A\nsvcB=Display B'
+
+  assert_exitcode 0
+  assert_file_contains "$manifest" '/Settings/Base'
+  assert_file_contains "$manifest" '/Settings/Vespera/CustomOverviewPages/ovA'
+  assert_file_contains "$manifest" '/Settings/Vespera/CustomMenuPages/menuA'
+  assert_file_contains "$manifest" '/Settings/Vespera/Packages/demo/DeviceServices/0/DisplayName'
+  assert_file_contains "$manifest" '/Settings/Vespera/Packages/demo/DeviceServices/1/ServiceName'
+  assert_file_contains "$manifest" '/Settings/Vespera/Packages/demo/Enabled'
+
+  cleanup_installer_dbus_runtime
+}
+
+test_installer_dbus_lib_nav_pages_sync_add_and_remove() {
+  stage_installer_dbus_runtime
+  load_installer_dbus_lib
+
+  # shellcheck disable=SC2034
+  DBUS_GET_VALUE='["qrc:/demo/Old.qml"]'
+  installer_dbus_lib_nav_pages_sync add demo 'PageA PageB'
+
+  assert_exitcode 0
+  assert_file_contains "$TEST_ROOT/set_string.log" '/Settings/Vespera/CustomNavPages|["qrc:/demo/Old.qml","qrc:/demo/PageA.qml","qrc:/demo/PageB.qml"]'
+
+  : > "$TEST_ROOT/set_string.log"
+  # shellcheck disable=SC2034
+  DBUS_GET_VALUE='["qrc:/demo/Old.qml"]'
+  installer_dbus_lib_nav_pages_sync remove demo 'Old'
+
+  assert_exitcode 0
+  assert_file_contains "$TEST_ROOT/set_string.log" '/Settings/Vespera/CustomNavPages|[]'
+
+  cleanup_installer_dbus_runtime
+}
+
+test_installer_dbus_lib_install_applies_manifest_and_queue_for_non_upgrade() {
+  stage_installer_dbus_runtime
+  load_installer_dbus_lib
+
+  local manifest="$TEST_ROOT/work/manifest.jsonl"
+  local queue="$TEST_ROOT/work/queue.tsv"
+
+  cat > "$manifest" <<'EOF'
+{"path":"/Settings/A","default":"1"}
+{"path":"/Settings/B","default":"2"}
+EOF
+
+  printf '/Settings/A\tupdated\n' > "$queue"
+
+  installer_dbus_lib_install "$manifest" "$queue" 0
+
+  assert_exitcode 0
+  assert_file_contains "$TEST_ROOT/add_settings.last" '/Settings/A'
+  assert_file_contains "$TEST_ROOT/add_settings.last" '/Settings/B'
+  assert_file_contains "$TEST_ROOT/set_string.log" '/Settings/A|updated'
+
+  cleanup_installer_dbus_runtime
+}
+
+test_installer_dbus_lib_install_upgrade_applies_delta() {
+  stage_installer_dbus_runtime
+  load_installer_dbus_lib
+
+  local current="$TEST_ROOT/work/current.jsonl"
+  local previous="$TEST_ROOT/work/previous.jsonl"
+
+  cat > "$current" <<'EOF'
+{"path":"/Settings/A","default":"2"}
+{"path":"/Settings/B","default":"1"}
+EOF
+
+  cat > "$previous" <<'EOF'
+{"path":"/Settings/A","default":"1"}
+{"path":"/Settings/C","default":"1"}
+EOF
+
+  installer_dbus_lib_install "$current" '' 1 "$previous"
+
+  assert_exitcode 0
+  assert_file_contains "$TEST_ROOT/add_settings.last" '/Settings/A'
+  assert_file_contains "$TEST_ROOT/add_settings.last" '/Settings/B'
+  assert_file_contains "$TEST_ROOT/remove_settings.last" '/Settings/C'
+  assert_file_not_exist "$current.add"
+  assert_file_not_exist "$current.remove"
+
+  cleanup_installer_dbus_runtime
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

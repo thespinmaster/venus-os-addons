@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/../src/data/apps/available/vespera/libs/dbus-lib"
+
+DBUS_CALLS=
+DBUS_MODE=
+DBUS_GET_VALUE_RESPONSE=
+
+dbus() {
+  DBUS_CALLS+=$'\n'"$*"
+
+  case "$DBUS_MODE" in
+    set-ok)
+      if [[ "${3:-}" == *SetValue* || "${4:-}" == SetValue ]]; then
+        return 0
+      fi
+      ;;
+    set-fallback)
+      if [[ "${3:-}" == *SetValue* || "${4:-}" == SetValue ]]; then
+        return 1
+      fi
+      if [[ "${3:-}" == *AddSetting* || "${4:-}" == AddSetting ]]; then
+        return 0
+      fi
+      ;;
+    get-empty)
+      if [[ "${3:-}" == *GetValue* || "${4:-}" == GetValue ]]; then
+        printf '%s' ''
+        return 0
+      fi
+      ;;
+    get-value)
+      if [[ "${3:-}" == *GetValue* || "${4:-}" == GetValue ]]; then
+        printf "'%s'\n" "$DBUS_GET_VALUE_RESPONSE"
+        return 0
+      fi
+      ;;
+    branch-values)
+      if [[ "${3:-}" == *GetValue* || "${4:-}" == GetValue ]]; then
+        printf "{ 'A': 1, 'B': 2, 'A/C': 3 }\n"
+        return 0
+      fi
+      ;;
+  esac
+
+  return 0
+}
+
+test_dbus_lib_set_string_value_uses_setvalue_on_existing_setting() {
+  DBUS_CALLS=
+  DBUS_MODE=set-ok
+
+  dbus_lib_set_string_value '/Settings/Test/Item' 'abc'
+
+  assert_exitcode 0
+  assert_contains 'com.victronenergy.settings /Settings/Test/Item SetValue abc' "$DBUS_CALLS"
+}
+
+test_dbus_lib_set_string_value_falls_back_to_addsetting() {
+  DBUS_CALLS=
+  DBUS_MODE=set-fallback
+
+  dbus_lib_set_string_value '/Settings/Test/Item' 'abc'
+
+  assert_exitcode 0
+  assert_contains 'com.victronenergy.settings /Settings/Test/Item SetValue abc' "$DBUS_CALLS"
+  assert_contains 'com.victronenergy.settings / AddSetting /Settings/Test Item abc s 0 0' "$DBUS_CALLS"
+}
+
+test_dbus_lib_get_value_returns_default_when_empty() {
+  DBUS_MODE=get-empty
+  local result=
+
+  dbus_lib_get_value '/Settings/Test/Item' result 'fallback'
+
+  assert_exitcode 0
+  assert_eq 'fallback' "$result"
+}
+
+test_dbus_lib_get_value_returns_unquoted_value() {
+  DBUS_MODE=get-value
+  DBUS_GET_VALUE_RESPONSE='hello-world'
+  local result=
+
+  dbus_lib_get_value '/Settings/Test/Item' result
+
+  assert_exitcode 0
+  assert_eq 'hello-world' "$result"
+}
+
+test_dbus_lib_remove_settings_extracts_paths_and_calls_remove() {
+  DBUS_CALLS=
+  DBUS_MODE=set-ok
+
+  dbus_lib_remove_settings <<'EOF'
+{"path":"/Settings/One", "default":0, "min":0, "max":1}
+{"path":"/Settings/Two", "default":0, "min":0, "max":1}
+EOF
+
+  assert_exitcode 0
+  assert_contains 'RemoveSettings %[' "$DBUS_CALLS"
+  assert_contains '/Settings/One' "$DBUS_CALLS"
+  assert_contains '/Settings/Two' "$DBUS_CALLS"
+}
+
+test_dbus_lib_get_branch_names_extracts_unique_leaf_names() {
+  DBUS_MODE=branch-values
+  local output
+  output="$(dbus_lib_get_branch_names '/Settings/Test')"
+
+  assert_exitcode 0
+  assert_eq $'A\nB' "$output"
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

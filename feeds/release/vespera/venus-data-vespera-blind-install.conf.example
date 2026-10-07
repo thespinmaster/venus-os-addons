@@ -4,9 +4,9 @@
 
 # Feed format:
 # feed <feed-name> <feed-url>
-feed opkg-manager-release https://thespinmaster.github.io/venus-os-addons/feeds/release/opkg-manager
+feed vespera-release https://thespinmaster.github.io/venus-os-addons/feeds/release/vespera
 
 # Package format:
 # package <action> [args ...] <package-name>
-package install opkg-manager
+package install vespera
 package install --force-reinstall dbus-inetbox

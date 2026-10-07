@@ -14,8 +14,8 @@ set -euo pipefail
 ##############################################################
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-bridge_src="$repo_root/addons/opkg-manager/src-external/opkg-json-indexer"
-output_dir="$repo_root/addons/opkg-manager/src/data/opkg-manager/opkg-bridge"
+bridge_src="$repo_root/addons/vespera/src-external/opkg-json-indexer"
+output_dir="$repo_root/addons/vespera/src/data/apps/vespera/opkg"
 output_bin="$output_dir/opkg-json-indexer"
 
 armhf_build=false

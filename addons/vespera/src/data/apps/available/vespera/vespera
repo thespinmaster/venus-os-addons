@@ -1,0 +1,142 @@
+#!/bin/bash
+
+# Vespera CLI script
+
+declare -g __vespera_path; __vespera_path="$(dirname "${BASH_SOURCE[0]}")"
+__vespera_path="$(cd "${__vespera_path}" && pwd)"
+source "$__vespera_path/libs/source-lib"
+addsource "libs/vespera-lib"
+
+vespera_show_help() {
+	cat <<'EOF'
+Usage:
+	vespera [options] [command] [arguments...]
+	vespera [opkg-options] [opkg-args...]
+
+Vespera options:
+	--help, help                  Show this help
+	-V0 .. -V4                    Set opkg verbosity level
+	--in-gui                      Internal GUI mode flag
+
+Commands:
+	status                        Show Vespera status via opkg
+	inspect, i [app ...]          Show app, service, addon, and dbus details
+	list-enabled, le [app ...]    List enabled apps/packages
+	list-services, ls [app ...]   List service status
+	list-feeds                    Show the active feed file and its contents
+	list-feed-sources             List feed source files
+	feed [set|add|edit|remove] ...
+	                              Manage the active feed configuration
+	device [scan|bind|remove] ...
+	                              Device-related actions
+	fs-ro                         Remount / read-only
+	enable [app ...]              Enable matching installed apps (or all when no args)
+	disable [app ...]             Disable matching enabled apps (or all when no args)
+	update                        Update package metadata and regenerate indexes
+
+Notes:
+	Any arguments not handled above are passed directly to opkg.
+EOF
+}
+
+
+# get and remove vesera args, then replace $@ with trimmed args
+declare -a args=()
+declare command=
+
+function processArgs() {
+
+	command=""
+	args=()
+	while [ "$#" -gt 0 ]; do
+		case "$1" in
+			--in-gui)
+				VESPERA_IN_GUI=true;;
+			-V[0-4])
+				VESPERA_VERBOSITY="${1#-V}"
+				args+=("$1");;
+
+			--help)
+				vespera_show_help;;
+			*)
+				if [[ -z $command && ${1:0:1} !=  "-" ]]; then
+					command="$1"
+				else
+					args+=("$1")
+				fi
+				;;
+		esac
+		shift
+	done
+
+}
+
+processArgs "$@"
+set -- "${args[@]}"
+
+[[ $VESPERA_IN_GUI == true ]] && {
+	for ((i=1; i<=10; i++)); do
+		echo "$1, $2: step $i"
+		sleep 1
+	done
+	exit 0
+}
+
+opkg_ensure_combined_conf_file
+
+case "$command" in
+	help)
+		vespera_show_help; exit;;
+	fs-ro)
+		mount -o remount,ro /; exit;;
+	feed)
+		if [[ "$#" -eq 0 ]]; then
+			opkg_lib_show_feed_name; exit
+	  elif [[ $1 == "set" ]]; then
+			opkg_lib_set_feed_source "${2}" || exit
+			opkg_lib_show_feed_contents
+			exit;
+		fi
+		opkg_lib_feed_crud "$@"; exit
+		;;
+	device)
+		"$__vespera_path/libs/device-lib" "$@"; exit;;
+	status)
+		exec opkg -f "${VESPERA_COMBINED_CONF_FILE}" "$@" | opkg_lib_process_opkg_status "$@";;
+	inspect|i)
+		( . "$__vespera_path/scripts/inspect" "$@" ); exit;;
+	list-enabled|le)
+		opkg_lib_list_enabled_packages "all" "$@"; exit;;
+	list-services|ls)
+		declare -a ___template_services=()
+		vespera_lib_list_service_status ___template_services "$@"; exit;;
+	list-feeds)
+		opkg_lib_show_feed_contents; exit;;
+	list-feed-sources)
+		opkg_lib_list_feed_sources; exit;;
+	enable|disable)
+		vespera_lib_enable_disable "$command" "$@"; exit;;
+	update)
+		opkg_lib_update || exit
+		[[ -z "$*" ]] && { vespera_lib_index; exit; }
+		processArgs "$@"
+		set -- "${args[@]}"
+		;;
+esac
+
+[[ -z "$command" && -z "$*" ]] && {
+	vespera_show_help
+	echo
+	exec opkg -f "${VESPERA_COMBINED_CONF_FILE}"
+}
+
+vespera_lib_pre_install "$command" "$@"
+
+((VESPERA_VERBOSITY>1)) && echo "VESPERA_WORKING_DIR=$VESPERA_WORKING_DIR"
+
+opkg -f "${VESPERA_COMBINED_CONF_FILE}" "$command" "$@"
+retval=$?
+
+vespera_lib_post_install "$command"
+
+exit $retval

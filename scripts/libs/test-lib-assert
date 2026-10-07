@@ -1,0 +1,352 @@
+#!/usr/bin/env bash
+
+if [[ -n "${__TEST_LIB_ASSERT_SOURCED:-}" ]]; then
+  return 0
+fi
+__TEST_LIB_ASSERT_SOURCED=1
+
+###################################
+# Asserts if a file exists
+# Arguments:
+#   $1 file name
+#   $2 optional - comment; default; "File exists"
+#   $3 optional - retry count; default 1
+###################################
+assert_file_exists() {
+  local res=false
+  local comment="${2:-}"
+  local -i retry_count="${3:-1}"
+
+  __set_comment comment "assert_file_exists: $1"
+
+  while (( retry_count > 0)); do
+    [[ -f "${1}" ]] && { res=true; break; }
+    (( retry_count-=1 ))
+    sleep 0.25
+  done
+
+  __assert_lib_pass_or_fail $res "$comment" "file:$1"
+
+}
+
+###################################
+# Asserts if a file does not exist
+# Arguments:
+#   $1 file name
+#   $2 comment
+###################################
+assert_file_not_exist() {
+  local res=false
+  local comment="${2:-}"
+  __set_comment comment "assert_file_not_exist: #1"
+  [[ -f "${1}" ]] || res=true
+  __assert_lib_pass_or_fail $res "$comment" "file:$1"
+}
+
+###################################
+# Asserts if a directory exists
+# Arguments:
+#   $1 directory path
+#   $2 comment
+###################################
+assert_dir_exists() {
+  local res=false
+  local comment="${2:-}"
+  __set_comment comment "assert_dir_exists: #1"
+  [[ -d "${1}" ]] && res=true
+  __assert_lib_pass_or_fail $res "$comment" "path:$1"
+}
+
+###################################
+# Asserts if a directory does not exist
+# Arguments:
+#   $1 directory path
+#   $2 comment
+###################################
+assert_dir_not_exist() {
+  local res=false
+  local comment="${2:-}"
+  __set_comment comment "assert_dir_not_exist: #1"
+  [[ -d "${1}" ]] || res=true
+  __assert_lib_pass_or_fail $res "$comment" "path:$1"
+}
+
+###################################
+# Asserts if 2 values are equal
+# Arguments:
+#   $1 value1
+#   $2 value2
+#   $3 comment
+###################################
+assert_eq() {
+  local res=false
+  local comment="${3:-}"
+  __set_comment comment "assert_eq: #1 == #2"
+  [[ "${1:-}" == "${2:-}" ]] && res=true
+  __assert_lib_pass_or_fail $res "$comment" "value 1:$1" "value 2:$2"
+ }
+
+ ###################################
+# Asserts if value1 is greater than value 2
+# Arguments:
+#   $1 value1
+#   $2 value1
+#   $3 comment
+###################################
+assert_gt() {
+  local res=false
+  local comment="${3:-}"
+  __set_comment comment "assert_gt: #1 > #2"
+  (( "${1}" > "${2}" )) && res=true
+  __assert_lib_pass_or_fail $res "$comment" "value 1:$1" "value 2:$2"
+ }
+
+###################################
+# Asserts if value1 is less than value 2
+# Arguments:
+#   $1 value1
+#   $2 value1
+#   $3 comment
+###################################
+assert_lt() {
+  local res=false
+  local comment="${3:-}"
+  __set_comment comment "assert_lt: #1 < #2"
+  (( "${1}" < "${2}" )) && res=true
+  __assert_lib_pass_or_fail $res "$comment" "value 1:$1" "value 2:$2"
+ }
+
+###################################
+# Asserts if value1 is between value 2 and value 3
+# Arguments:
+#   $1 value1
+#   $2 value2
+#   $3 value3
+#   $4 comment
+###################################
+assert_between() {
+
+  if (( "${2}" >= "${3}"  )); then
+    echo "value1 must be greater than value 2" >&2;
+    return 0
+  fi
+
+  local res=false
+  local comment="${4:-}"
+  __set_comment comment "assert_between: #1 in [#2, #3]"
+  (( "${1}" >= "${2}" )) && (( "${1}" <= "${3}" )) && res=true
+  __assert_lib_pass_or_fail $res "$comment" "value 1:$1" "value 2:$2" "value 3:$3"
+ }
+
+###################################
+# Asserts if 2 values are not equal
+# Arguments:
+#   $1 value1
+#   $2 value2
+#   $3 comment
+###################################
+assert_not_eq() {
+  local res=false
+  local comment="${3:-}"
+  __set_comment comment "assert_not_eq: #1 != #2"
+  [[ "${1}" != "${2}" ]] && res=true
+  __assert_lib_pass_or_fail $res "$comment" "value 1:$1" "value 2:$2"
+ }
+
+###################################
+# Asserts if the value is empty
+# Arguments:
+#   $1 value
+#   $2 comment
+###################################
+assert_empty() {
+  local res=false
+  local comment="${2:-}"
+  __set_comment comment "assert_empty: #1"
+  [[ -z "${1:-}" ]] && res=true
+  __assert_lib_pass_or_fail $res "$comment" "value:${1:-}"
+}
+
+###################################
+# Asserts if the value is not empty
+# Arguments:
+#   $1 value
+#   $2 comment
+###################################
+assert_not_empty() {
+  local res=false
+  local comment="${2:-}"
+  __set_comment comment "assert_not_empty: #1"
+  [[ -n "${1:-}" ]] && res=true
+  __assert_lib_pass_or_fail $res "$comment" "value:${1:-}"
+}
+
+###################################
+# Asserts if two files are equal (using cmp)
+# Arguments:
+#   $1 file 1
+#   $2 file 2
+#   $3 comment
+###################################
+assert_files_eq() {
+  local res=false
+  local file1="${1}"
+  local file2="${2}"
+  local comment="${3:-}"
+  __set_comment comment "assert_files_eq: #1 == #2"
+  cmp --quiet "${file1}" "${file2}" && res=true
+  __assert_lib_pass_or_fail $res "$comment" "file1:${file1}" "file2:${file2}"
+}
+
+###################################
+# Asserts if a variable exists (not unset)
+# Arguments:
+#   $1 variable name
+#   $2 comment
+###################################
+assert_var_exists() {
+  local res=false
+  local comment="${2:-}"
+  [[ -v $1 ]] && res=true
+  __set_comment comment "assert_var_exists: #1"
+  __assert_lib_pass_or_fail $res "$comment" "${1}"
+}
+
+###################################
+# Asserts if a variable does not exist (not unset)
+# Arguments:
+#   $1 variable name
+#   $2 comment
+###################################
+assert_var_not_exist() {
+  local res=false
+  local comment="${2:-}"
+  [[ ! -v $1 ]] && res=true # normalize the results to true/false
+  __set_comment comment "assert_var_not_exist: #1"
+  __assert_lib_pass_or_fail $res "$comment" "${1}"
+}
+
+###################################
+# Logs the result of an external test
+# Arguments:
+#   $1 result
+#   $2 comment
+#   $3 any args
+###################################
+assert_result() {
+  local res=false
+  local comment="${2:-}"
+  [[ ${1} == true ||  ${1} == 0 ]] && res=true # normalize the results to true/false
+  __set_comment comment "assert_result: #1"
+  shift 2 # for args
+  __assert_lib_pass_or_fail $res "$comment" "${@}"
+}
+
+###################################
+# Asserts if the exit code equals
+# Arguments:
+#   $1 - required; exit code to match
+#   $2 - optional; comment
+# this method must be placed directly
+# after the command to check as it
+# uses "$?"
+###################################
+assert_exitcode() {
+  exitcode=$?
+  local res=false
+  local comment="${2:-}"
+  local expected=${1:-0}
+  __set_comment comment "assert_exitcode:"
+  (( exitcode == expected )) && res=true
+  __assert_lib_pass_or_fail $res "$comment" "expected:$expected" "recieved:$exitcode"
+}
+
+###################################
+# Asserts if the exit code does not equal
+# Arguments:
+#   $1 - required; exit code to not match
+#   $2 - optional; comment
+# this method must be placed directly
+# after the command to check as it
+# uses "$?"
+###################################
+assert_exitcode_not() {
+  exitcode=$?
+  local res=false
+  local comment="${2:-}"
+  local arg1 arg2
+  arg1="not expecting:$1"; arg2="recieved:$exitcode"
+  __set_comment comment "assert_exitcode_not: arg1"
+  (( exitcode != ${1} )) && res=true
+  __assert_lib_pass_or_fail $res "$comment" "$arg1" "$arg2"
+}
+
+###################################
+# Asserts if arg2 contains the string in arg1
+# Arguments:
+#   $1 - required; the string value to match
+#   $2 - required; the string to look for the match in
+#   $3 - optional comment
+###################################
+assert_contains() {
+  local res=false
+  local match="${1}"
+  local source="${2:-}"
+  local comment="${3:-}"
+  __set_comment comment "assert_contains: arg1 contains arg2"
+
+  [[ -n "${match}" ]] && [[ "$source" == *"${match}"* ]] && res=true
+  __assert_lib_pass_or_fail $res "$comment" "arg1:$source" "arg2:$match"
+}
+
+###################################
+# Asserts if arg2 does not contain the string in arg1
+# Arguments:
+#   $1 - required; the string value to match
+#   $2 - required; the string to look for the match in
+#   $3 - optional comment
+###################################
+assert_not_contain() {
+  local res=false
+  local match="${1}"
+  local source="${2:-}"
+  local comment="${3:-}"
+  __set_comment comment "assert_not_contain: arg1 not constains arg1"
+
+  [[ -n "${match}" ]] && [[ "$source" == *"${match}"* ]] || res=true
+  __assert_lib_pass_or_fail $res "$comment" "arg1:$source" "arg2:$match"
+}
+
+###################################
+# Asserts if a file contains a string
+# Arguments:
+#   $1 - required; the file to check
+#   $2 - required; the string value to find
+#   $3 - optional comment
+###################################
+assert_file_contains() {
+  local res=false
+  local file="${1}"
+  local match="${2}"
+  local comment="${3:-}"
+  __set_comment comment "assert_file_contains: file (#1) contains (#2)"
+  [[ -n "${match}" ]] && [[ "$(<"${file}")" == *"${match}"* ]] && res=true
+  __assert_lib_pass_or_fail $res "$comment" "file:$file" "match:$match"
+}
+
+###################################
+# Asserts if a file does not contain a string
+# Arguments:
+#   $1 the file to check
+#   $2 the string value to find
+#   $3 comment
+###################################
+assert_file_not_contain() {
+  local res=false
+  local file="${1}"
+  local match="${2}"
+  local comment="${3:-}"
+  __set_comment comment "assert_file_not_contain: file (arg1) does not contain arg2"
+  [[ -n "${match}" ]] && [[ "$(<"${file}")" == *"${match}"* ]] || res=true
+  __assert_lib_pass_or_fail $res "$comment" "file:$file" "match:$match"
+}

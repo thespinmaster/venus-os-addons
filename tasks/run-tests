@@ -5,16 +5,27 @@ set -o nounset
 this_path="$(dirname "${BASH_SOURCE[0]}")"
 
 . "$this_path/../scripts/libs/test-lib"
- 
+
 declare -a test_files=()
+show_totals=0
+
+if [[ "${1:-}" == "--show-totals" ]]; then
+  show_totals=1
+  shift
+fi
 
 if [[ "${1:-}" == "all" || -z "${1:-}" ]]; then
-  mapfile -t test_files < <(find "$this_path/../" -path "*/*/tests/*" \( -name "*-tests" ! -name "_*" \))
+  mapfile -t test_files < <(
+    find "$this_path/../" \
+      -type d -name tmp -prune -o \
+      -path "*/*/tests/*" -type f -name "*-tests" ! -name "_*" -print
+  )
 fi
 
 clear
 
-for test_file in "${test_files[@]}"; do
-  test_runner_on_source_file --summary "$test_file"
-  #test_runner_on_source_file "$test_file" 
-done 
+if (( show_totals )); then
+  test_runner_on_source_files --summary --show-totals "${test_files[@]}"
+else
+  test_runner_on_source_files --summary "${test_files[@]}"
+fi

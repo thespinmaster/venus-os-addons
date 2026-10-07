@@ -1,34 +1,24 @@
 #!/bin/bash
 
-declare package_name="mount-shares"
-declare new_file="/lib/libcap-ng.so.0.0.0"
-declare lnk_file="/lib/libcap-ng.so.0"
-declare tmp_folder="/tmp/${package_name}"
-declare tml_file="${tmp_folder}/libcap-ng.so.0.0.0"
+set -e
 
-if [[ -f "${new_file}" ]]; then
-  echo "backing up existing file ${new_file} to ${new_file}.mountshares"
-  mv "${new_file}" "${new_file}".mountshares
+[[ -f /data/apps/vespera/vespera ]] && exit 0
+
+#if vespera is not installed manualy add start up code to rc.local
+
+rc_local="/data/rc.local"
+mount_all_line='[[ ! -f /data/apps/vespera/vespera ]] && /data/apps/mount-shares/2-rc-startup'
+
+# Ensure rc.local exists before we try to append to it.
+
+if [[ ! -f "$rc_local" ]]; then
+	touch "$rc_local"
+	chmod +x "$rc_local"
 fi
 
-echo "copying ${tml_file} to ${new_file}"
-cp "${tml_file}" "${new_file}"
-chmod +x "${new_file}"
+# Add the mount-all line only once.
+if ! grep -Fqx "$mount_all_line" "$rc_local"; then
+	echo "$mount_all_line" >> "$rc_local"
+fi
 
-echo "unlinking"
-unlink "${lnk_file}" 2>/dev/null || true
-
-echo "Creating missing symbolic link ${lnk_file} --> ${new_file}"
-ln -s "${new_file}" "${lnk_file}"
-
-echo "cleaning up"
-rm -r "${tmp_folder}"
-
-source "${VE_ROOT_DIR:-}/data/opkg-manager/opkg-common"
-opkg_common_register_package "${package_name}"
-
-# call mount all incase existing mountpoints.conf file exists
-/data/${package_name}/mount-common "mount-all"
-
-echo "successfully installed ${package_name}"
-
+/data/apps/mount-shares/mount-lib "mount-all"

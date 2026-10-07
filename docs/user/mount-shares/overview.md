@@ -5,14 +5,14 @@ It allows you to mount SMB/CIFS and NFS network shares using a helper script.
 
 ## Prerequisite
 
-Install [Opkg Manager](../opkg-manager/setup.md) first before using this add-on.
+Install [Opkg Manager](../vespera/setup.md) first before using this add-on.
 
 ## Main Script
 
 The main script is:
 
 ```bash
-/data/mount-shares/mount-common
+/data/apps/mount-shares/mount-lib
 ```
 
 You can use it to:
@@ -26,7 +26,7 @@ You can use it to:
 Mount Shares stores saved mount definitions in:
 
 ```bash
-/data/conf/mount-shares.conf
+/data/apps/conf/mount-shares.conf
 ```
 
 Purpose of this file:
@@ -36,11 +36,11 @@ Purpose of this file:
 
 ## Automatic Re-mount After Reboot
 
-Shares mounted through `mount-common` are automatically re-mounted after reboot.
+Shares mounted through `mount-lib` are automatically re-mounted after reboot.
 At startup, Mount Shares runs:
 
 ```bash
-/data/mount-shares/mount-common mount-all
+/data/apps/mount-shares/mount-lib mount-all
 ```
 
 This command reads `/data/conf/mount-shares.conf` and mounts each saved share.

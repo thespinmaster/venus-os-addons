@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+. "$this_path/../src/data/apps/available/vespera/libs/overlay-lib"
+
+TEST_ROOT=
+MOUNT_LOG=
+UMOUNT_LOG=
+MOUNTPOINT_DOWN=
+
+stage_overlay_runtime() {
+  TEST_ROOT="$(vt_make_test_root)"
+  OVERLAY_BASE_DIR="$TEST_ROOT/overlays"
+  OVERLAY_CONF_FILE="$OVERLAY_BASE_DIR/overlays.conf"
+
+  MOUNT_LOG="$TEST_ROOT/mount.log"
+  UMOUNT_LOG="$TEST_ROOT/umount.log"
+  : > "$MOUNT_LOG"
+  : > "$UMOUNT_LOG"
+
+  mkdir -p "$TEST_ROOT/targets/a" "$TEST_ROOT/targets/b"
+}
+
+cleanup_overlay_runtime() {
+  [[ -n "${TEST_ROOT:-}" ]] && vt_safe_rm_rf "$TEST_ROOT"
+}
+
+mount() {
+  printf 'mount:%s\n' "$*" >> "$MOUNT_LOG"
+  return 0
+}
+
+umount() {
+  printf 'umount:%s\n' "$*" >> "$UMOUNT_LOG"
+  return 0
+}
+
+mountpoint() {
+  if [[ "$1" == '-q' ]]; then
+    if [[ "${MOUNTPOINT_DOWN:-0}" == '1' ]]; then
+      return 1
+    fi
+    return 0
+  fi
+  return 0
+}
+
+test_overlay_lib_register_creates_conf_and_runtime_dirs() {
+  stage_overlay_runtime
+
+  local conf_input="$TEST_ROOT/register.conf"
+  printf '%s\n' "$TEST_ROOT/targets/a" > "$conf_input"
+
+  overlay_lib_register demo < "$conf_input"
+
+  assert_exitcode 0
+  assert_file_contains "$OVERLAY_CONF_FILE" "demo|$TEST_ROOT/targets/a"
+
+  local runtime_dir
+  runtime_dir="$(__overlay_lib_get_runtime_dir "$TEST_ROOT/targets/a")"
+  assert_dir_exists "$runtime_dir/$OVERLAY_WORK_DIRNAME"
+  assert_dir_exists "$runtime_dir/$OVERLAY_UPPER_DIRNAME"
+  assert_dir_exists "$runtime_dir/$OVERLAY_MERGED_DIRNAME"
+
+  cleanup_overlay_runtime
+}
+
+test_overlay_lib_unregister_keeps_shared_target_when_other_apps_exist() {
+  stage_overlay_runtime
+
+  mkdir -p "$OVERLAY_BASE_DIR"
+  cat > "$OVERLAY_CONF_FILE" <<EOF
+a|$TEST_ROOT/targets/a
+b|$TEST_ROOT/targets/a
+EOF
+
+  overlay_lib_unregister a
+
+  assert_exitcode 0
+  assert_file_contains "$OVERLAY_CONF_FILE" "b|$TEST_ROOT/targets/a"
+  assert_file_not_contain "$OVERLAY_CONF_FILE" "a|$TEST_ROOT/targets/a"
+
+  cleanup_overlay_runtime
+}
+
+test_overlay_lib_reconcile_removes_stale_upper_files_not_in_owned_list() {
+  stage_overlay_runtime
+
+  mkdir -p "$OVERLAY_BASE_DIR"
+  cat > "$OVERLAY_CONF_FILE" <<EOF
+a|$TEST_ROOT/targets/a
+EOF
+
+  local upper_dir
+  upper_dir="$(__overlay_lib_get_runtime_dir "$TEST_ROOT/targets/a")/$OVERLAY_UPPER_DIRNAME"
+  mkdir -p "$upper_dir/sub"
+
+  local stale_path="$upper_dir/sub/old.txt"
+  printf '%s\n' 'stale' > "$stale_path"
+
+  local owned="$TEST_ROOT/owned.list"
+  local whiteouts="$TEST_ROOT/whiteouts.list"
+  : > "$owned"
+  : > "$whiteouts"
+
+  overlay_lib_reconcile "$owned" "$whiteouts"
+
+  assert_exitcode 0
+  assert_file_not_exist "$stale_path"
+
+  cleanup_overlay_runtime
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

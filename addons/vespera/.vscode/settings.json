@@ -5,5 +5,8 @@
 			"envManager": "ms-python.python:system",
 			"packageManager": "ms-python.python:pip"
 		}
-	]
+	],
+	"files.associations": {
+		"*.bats": "shellscript"
+	}
 }

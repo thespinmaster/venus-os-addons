@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_control="/data/dev/addons/vespera/src/CONTROL/prerm"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+
+TEST_ROOT=
+SCRIPT_PATH=
+
+stage_prerm_runtime() {
+  TEST_ROOT="$(vt_make_test_root)"
+  SCRIPT_PATH="$TEST_ROOT/pkg/demo.prerm"
+
+  mkdir -p "$TEST_ROOT/var/lock" "$TEST_ROOT/work" "$TEST_ROOT/pkg" "$TEST_ROOT/data/apps/available/vespera/scripts"
+
+  cp "$source_control" "$TEST_ROOT/demo.prerm"
+  chmod +x "$TEST_ROOT/demo.prerm"
+
+  cat > "$TEST_ROOT/data/apps/available/vespera/scripts/remove" <<'EOF'
+#!/usr/bin/env bash
+printf 'remove:%s\n' "$*" >> "$TEST_LOG"
+EOF
+  chmod +x "$TEST_ROOT/data/apps/available/vespera/scripts/remove"
+
+  cat > "$TEST_ROOT/pkg/vespera.overlay-lib" <<'EOF'
+#!/usr/bin/env bash
+printf 'overlay:%s\n' "$*" >> "$TEST_LOG"
+cat >/dev/null
+EOF
+  chmod +x "$TEST_ROOT/pkg/vespera.overlay-lib"
+
+  cat > "$TEST_ROOT/pkg/vespera.installer-overlays" <<'EOF'
+/path/one
+EOF
+
+  ln -s "$TEST_ROOT/work" "$TEST_ROOT/var/lock/vespera"
+  printf '2\n' > "$TEST_ROOT/work/verbosity"
+
+  mv "$TEST_ROOT/demo.prerm" "$SCRIPT_PATH"
+  : > "$TEST_ROOT/pkg/demo.installer"
+}
+
+cleanup_prerm_runtime() {
+  [[ -n "${TEST_ROOT:-}" ]] && vt_safe_rm_rf "$TEST_ROOT"
+}
+
+test_control_prerm_invokes_remove_and_registers_overlay() {
+  stage_prerm_runtime
+
+  TEST_LOG="$TEST_ROOT/prerm.log" VESPERA_ROOT="$TEST_ROOT" \
+    bash "$SCRIPT_PATH" remove >/dev/null 2>&1
+
+  assert_exitcode 0
+  assert_file_contains "$TEST_ROOT/prerm.log" "remove:remove $TEST_ROOT/pkg/demo.installer $TEST_ROOT/work 2"
+  assert_file_contains "$TEST_ROOT/prerm.log" 'overlay:overlay-register demo'
+
+  cleanup_prerm_runtime
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_control_prerm_invokes_remove_and_registers_overlay
+fi

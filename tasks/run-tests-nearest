@@ -1,0 +1,66 @@
+#!/bin/bash
+
+set -o nounset
+
+this_path="$(dirname "${BASH_SOURCE[0]}")"
+
+. "$this_path/../scripts/libs/test-lib"
+
+show_totals=0
+if [[ "${1:-}" == "--show-totals" ]]; then
+  show_totals=1
+  shift
+fi
+show_totals=1
+
+start_path="${1:-}"
+[[ -z "$start_path" ]] && start_path="$PWD"
+
+if [[ -f "$start_path" ]]; then
+  start_path="$(dirname "$start_path")"
+fi
+
+current="$(cd "$start_path" 2>/dev/null && pwd || true)"
+[[ -z "$current" ]] && {
+  echo "Invalid start path: $start_path" >&2
+  exit 1
+}
+
+tests_dir=
+while [[ -n "$current" && "$current" != "/" ]]; do
+  if [[ "$(basename "$current")" == "tests" ]]; then
+    tests_dir="$current"
+    break
+  fi
+
+  if [[ -d "$current/tests" ]]; then
+    tests_dir="$current/tests"
+    break
+  fi
+
+  current="$(dirname "$current")"
+done
+
+if [[ -z "$tests_dir" ]]; then
+  echo "No tests directory found from: $start_path" >&2
+  exit 1
+fi
+
+mapfile -t test_files < <(
+  find "$tests_dir" \
+    -type d -name tmp -prune -o \
+    -type f -name "*-tests" ! -name "_*" -print | sort
+)
+
+if [[ "${#test_files[@]}" -eq 0 ]]; then
+  echo "No test files found in: $tests_dir" >&2
+  exit 1
+fi
+
+clear
+
+if (( show_totals )); then
+  test_runner_on_source_files --summary --show-totals "${test_files[@]}"
+else
+  test_runner_on_source_files --summary "${test_files[@]}"
+fi

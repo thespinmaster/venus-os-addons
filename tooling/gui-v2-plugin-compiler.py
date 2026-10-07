@@ -72,7 +72,6 @@ def write_qrc(qmlFiles, qmFiles, imageFiles, name):
 		has_device_delegates = False
 
 		for filename in allFiles:
-				print(f"filename:{filename}")
 				if filename.endswith(".qml") and filename.startswith("DeviceListDelegate_") :
 					device_delegates_contents += f"<file>{filename}</file>\n"
 					has_device_delegates = True
@@ -92,7 +91,7 @@ def write_qrc(qmlFiles, qmFiles, imageFiles, name):
 				with open(filename, 'w') as file:
 						file.write(contents)
 		except IOError as e:
-				print(f"    Error writing to file: {e}")
+				print(f"    Error writing to file: {e}", e.stderr, file=sys.stderr)
 
 def _minify_qml_text(relative_path):
     """
@@ -169,7 +168,7 @@ def _precompile_qml_resources(qrc_file, temp_qrc_file, qmlcachegen_path, pre_com
 
 				# Invoke the separate whitespace stripping routine
 				if not pre_compile and minify:
-					print(f"    Stripped leading lines/whitespace from text file: {relative_path}")
+					#print(f"    Stripped leading lines/whitespace from text file: {relative_path}")
 					optimized_text_path = _minify_qml_text(relative_path)
 					generated_artifacts.append(optimized_text_path)
 					file_elem.set('alias', relative_path)
@@ -235,7 +234,7 @@ def run_rcc(name, pre_compile=False, minify=False):
 		generated_artifacts = []
 
 		if not os.path.exists(qrcFile):
-				print(f"Error: {qrcFile} not found.")
+				print(f"Error: {qrcFile} not found.", file=sys.stderr)
 				return
 
 		# 2. Invoke the optimization/compilation workflow
@@ -285,8 +284,8 @@ def b64_encode_rcc(name):
 						data = file.read()
 						base64data = base64.b64encode(data)
 						base64Str = base64data.decode('utf-8')
-		except FileNotFoundError:
-				print("    cannot open " + rccFile + " for reading!")
+		except FileNotFoundError as e:
+				print("    cannot open " + rccFile + " for reading!", e.stderr, file=sys.stderr)
 		return base64Str
 
 def write_compiled_json(output_path, name, version, minRequiredVersion, maxRequiredVersion, translations, integrations, resource):
@@ -366,9 +365,11 @@ if __name__ == '__main__':
 		parser.add_argument('-m', '--minify', action=argparse.BooleanOptionalAction)
 
 		args = parser.parse_args()
+		# print(args.name,file=sys.stderr)
+		# print(os.path.basename(os.getcwd()),file=sys.stderr)
 
 		if args.name != os.path.basename(os.getcwd()):
-				print("\n\nERROR: plugin name does not match working directory name!")
+				print("\n\nERROR: plugin name does not match working directory name!", file=sys.stderr)
 				sys.exit(1)
 
 		imageFiles = collect_filenames(['.',"./images"], '.svg')
@@ -408,10 +409,10 @@ if __name__ == '__main__':
 		integrations = []
 		if len(args.settings) > 0:
 				if not args.settings.endswith('.qml'):
-						print("\n\nERROR: Invalid settings page specified, must be a .qml file")
+						print("\n\nERROR: Invalid settings page specified, must be a .qml file",file=sys.stderr)
 						sys.exit(1)
 				if not os.path.exists(args.settings):
-						print(f"\n\nERROR: Settings page \"{args.settings}\" not found in current directory ({os.path.dirname(os.path.abspath(args.settings))})")
+						print(f"\n\nERROR: Settings page \"{args.settings}\" not found in current directory ({os.path.dirname(os.path.abspath(args.settings))})", file=sys.stderr)
 						sys.exit(1)
 				settingsIntegration = {
 						"type": 1,
@@ -425,13 +426,13 @@ if __name__ == '__main__':
 										print("\n\nERROR: Invalid devicelist triplet!")
 										sys.exit(1)
 								if not integration[0].startswith(('0x', '0X')):
-										print("\n\nERROR: Invalid product id specified in devicelist triplet, must be a hex string starting with 0x")
+										print("\n\nERROR: Invalid product id specified in devicelist triplet, must be a hex string starting with 0x", file=sys.stderr)
 										sys.exit(1)
 								if not integration[1].endswith('.qml'):
-										print("\n\nERROR: Invalid settings page specified in devicelist triplet, must be a .qml file")
+										print("\n\nERROR: Invalid settings page specified in devicelist triplet, must be a .qml file", file=sys.stderr)
 										sys.exit(1)
 								if not os.path.exists(integration[1]):
-										print(f"\n\nERROR: Settings page \"{integration[1]}\" not found in current directory ({os.path.dirname(os.path.abspath(integration[1]))})")
+										print(f"\n\nERROR: Settings page \"{integration[1]}\" not found in current directory ({os.path.dirname(os.path.abspath(integration[1]))})", file=sys.stderr)
 										sys.exit(1)
 								devicelistIntegration = {
 										"type": 2,

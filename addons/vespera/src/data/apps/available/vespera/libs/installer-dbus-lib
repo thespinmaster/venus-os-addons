@@ -1,0 +1,243 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+declare __this_path; __this_path="$(dirname "${BASH_SOURCE[0]}")"
+__this_path="$(cd "${__this_path}/.." && pwd)"
+
+# shellcheck source=/data/dev/addons/vespera/src/data/apps/available/vespera/libs/source-lib
+source "${VESPERA_ROOT:-}$__this_path/libs/source-lib"
+addsource "libs/dbus-lib"
+addsource "libs/json-lib"
+
+installer_dbus_lib_manifest_init() {
+	local manifest_file="${1:-}"
+	[[ -n "$manifest_file" ]] || return 1
+	mkdir -p "$(dirname "$manifest_file")"
+	: > "$manifest_file"
+}
+
+installer_dbus_lib_manifest_add_raw() {
+	local manifest_file="${1:-}"
+	[[ -n "$manifest_file" ]] || return 1
+
+	sed '/^[[:space:]]*$/d; s/^[[:space:]]*//; s/[[:space:]]*$//' >> "$manifest_file"
+}
+
+installer_dbus_lib_manifest_add_kv_group() {
+	local manifest_file="${1:-}"
+	local base_path="${2:-}"
+	local items="${3:-}"
+	local entry key value
+
+	[[ -n "$manifest_file" && -n "$base_path" ]] || return 1
+	[[ -n "$items" ]] || return 0
+
+	for entry in ${items}; do
+		key="${entry%%=*}"
+		value="${entry#*=}"
+		[[ "$entry" == *=* ]] || value=
+		printf '%s\n' "{\"path\":\"${base_path}/${key}\", \"default\":\"${value}\"}" >> "$manifest_file"
+	done
+}
+
+installer_dbus_lib_manifest_add_custom_service() {
+	local manifest_file="${1:-}"
+	local package_dbus_name="${2:-}"
+	local package_device="${3:-}"
+	local service_name display_name entry
+	local service_index=0
+
+	[[ -n "$manifest_file" && -n "$package_dbus_name" && -n "$package_device" ]] || return 1
+
+	while IFS= read -r entry; do
+		[[ -n "$entry" ]] || continue
+		service_name="${entry%%=*}"
+		display_name="${entry#*=}"
+		[[ "$entry" == *=* ]] || display_name=
+		[[ -n "$service_name" && -n "$display_name" ]] || continue
+
+		printf '%s\n' "{\"path\":\"/Settings/Vespera/Packages/${package_dbus_name}/DeviceServices/${service_index}/DisplayName\", \"default\":\"${display_name}\"}" >> "$manifest_file"
+		printf '%s\n' "{\"path\":\"/Settings/Vespera/Packages/${package_dbus_name}/DeviceServices/${service_index}/ServiceName\", \"default\":\"${service_name}\"}" >> "$manifest_file"
+		((service_index++))
+	done <<< "$package_device"
+
+}
+__installer_dbus_lib_manifest_apply_all() {
+	local manifest_file="${1:-}"
+	[[ -n "$manifest_file" && -f "$manifest_file" ]] || return 1
+	dbus_lib_add_settings < "$manifest_file"
+}
+
+__installer_dbus_lib_apply_queue_set() {
+	local queue_file="${1:-}"
+	[[ -n "$queue_file" && -f "$queue_file" ]] || return 1
+
+	while IFS=$'\t' read -r path value; do
+		[[ -n "$path" ]] || continue
+		dbus_lib_set_string_value "$path" "$value" 2>/dev/null || true
+	done < "$queue_file"
+}
+
+installer_dbus_lib_nav_pages_sync() {
+	local action="${1:-}"
+	local plugin_name="${2:-}"
+	local pages="${3:-}"
+	local dbus_path="/Settings/Vespera/CustomNavPages"
+	local json_values=""
+	local page
+
+	[[ -n "$plugin_name" && -n "$pages" ]] || return 0
+	[[ "$action" == "add" || "$action" == "remove" ]] || return 1
+
+	dbus_lib_get_value "$dbus_path" json_values '' || json_values='[]'
+	if [[ "$json_values" == "" ]]; then
+		json_values='[]'
+	fi
+
+	for page in ${pages}; do
+		local qrc_path="qrc:/${plugin_name}/${page}.qml"
+		if [[ "$action" == "add" ]]; then
+			json_values=$(json_lib_ary_add_unique_items "$json_values" "$qrc_path")
+		else
+			json_values=$(json_lib_ary_remove_items "$json_values" "$qrc_path")
+		fi
+	done
+
+	dbus_lib_set_string_value "$dbus_path" "$json_values" 1>/dev/null 2>/dev/null || {
+		dbus -y com.victronenergy.settings / AddSetting "${dbus_path%/*}" "${dbus_path##*/}" "$json_values" s 0 0
+	}
+}
+
+__installer_dbus_lib_upgrade_compute_delta() {
+	local current_file="${1:-}"
+	local previous_file="${2:-}"
+	local add_file="${3:-}"
+	local remove_file="${4:-}"
+	local source_line path compare_line compare_path
+
+	[[ -n "$current_file" && -n "$add_file" && -n "$remove_file" ]] || return 1
+
+	: > "$add_file"
+	: > "$remove_file"
+
+	if [[ ! -f "$current_file" ]]; then
+		return 0
+	fi
+
+	while IFS= read -r source_line; do
+		[[ -z "$source_line" ]] && continue
+		path="${source_line#*\"path\":\"}"
+		path="${path%%\"*}"
+		[[ -z "$path" ]] && continue
+
+		compare_line=
+		compare_path=
+		if [[ -f "$previous_file" ]]; then
+			while IFS= read -r compare_line; do
+				compare_path="${compare_line#*\"path\":\"}"
+				compare_path="${compare_path%%\"*}"
+				[[ "$path" == "$compare_path" ]] && break
+			done < "$previous_file"
+		fi
+
+		if [[ "$path" != "$compare_path" || "$source_line" != "$compare_line" ]]; then
+			printf '%s\n' "$source_line" >> "$add_file"
+		fi
+	done < "$current_file"
+
+	if [[ -f "$previous_file" ]]; then
+		while IFS= read -r source_line; do
+			[[ -z "$source_line" ]] && continue
+			path="${source_line#*\"path\":\"}"
+			path="${path%%\"*}"
+			[[ -z "$path" ]] && continue
+
+			compare_line=
+			compare_path=
+			while IFS= read -r compare_line; do
+				compare_path="${compare_line#*\"path\":\"}"
+				compare_path="${compare_path%%\"*}"
+				[[ "$path" == "$compare_path" ]] && break
+			done < "$current_file"
+
+			if [[ "$path" != "$compare_path" ]]; then
+				printf '%s\n' "$source_line" >> "$remove_file"
+			fi
+		done < "$previous_file"
+	fi
+}
+
+__installer_dbus_lib_upgrade_apply_delta() {
+	local add_file="${1:-}"
+	local remove_file="${2:-}"
+	[[ -n "$add_file" && -f "$add_file" ]] || return 0
+	[[ -n "$remove_file" && -f "$remove_file" ]] || true
+
+	dbus_lib_add_settings < "$add_file" 2>/dev/null || true
+	dbus_lib_remove_settings < "$remove_file" 2>/dev/null || true
+}
+
+installer_dbus_lib_build_manifest() {
+	local manifest_file="${1:-}"
+	local package_dbus_name="${2:-}"
+	local package_dbus_settings="${3:-}"
+	local custom_overview_pages="${4:-}"
+	local custom_menus="${5:-}"
+
+	local package_device="${6:-}"
+
+	[[ -n "$manifest_file" ]] || return 1
+	installer_dbus_lib_manifest_init "$manifest_file"
+
+	if [[ -n "$package_dbus_settings" ]]; then
+		printf '%s\n' "$package_dbus_settings" | installer_dbus_lib_manifest_add_raw "$manifest_file"
+	fi
+
+	if [[ -n "$custom_overview_pages" ]]; then
+		installer_dbus_lib_manifest_add_kv_group "$manifest_file" "/Settings/Vespera/CustomOverviewPages" "$custom_overview_pages"
+	fi
+
+	if [[ -n "$custom_menus" ]]; then
+		installer_dbus_lib_manifest_add_kv_group "$manifest_file" "/Settings/Vespera/CustomMenuPages" "$custom_menus"
+	fi
+
+	if [[ -n "$package_dbus_name" && -n "$package_device" ]]; then
+		installer_dbus_lib_manifest_add_custom_service "$manifest_file" "$package_dbus_name" "$package_device"
+	fi
+
+  printf '%s\n' "{\"path\":\"/Settings/Vespera/Packages/$package_dbus_name/Enabled\", \"default\":0, \"min\":0, \"max\":1}" >> "$manifest_file"
+	# echo ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
+	# cat "$manifest_file"
+	# echo ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
+}
+
+installer_dbus_lib_install() {
+	local manifest_file="${1:-}"
+	local queue_file="${2:-}"
+	local is_upgrade="${3:-0}"
+	local previous_manifest="${4:-}"
+	local add_file remove_file
+
+	[[ -n "$manifest_file" && -f "$manifest_file" ]] || return 1
+
+	if [[ "$is_upgrade" == "1" && -n "$previous_manifest" && -f "$previous_manifest" ]]; then
+		add_file="${manifest_file}.add"
+		remove_file="${manifest_file}.remove"
+		__installer_dbus_lib_upgrade_compute_delta "$manifest_file" "$previous_manifest" "$add_file" "$remove_file"
+		__installer_dbus_lib_upgrade_apply_delta "$add_file" "$remove_file"
+		rm -f "$add_file" "$remove_file"
+	else
+		__installer_dbus_lib_manifest_apply_all "$manifest_file"
+	fi
+
+	if [[ -n "$queue_file" && -f "$queue_file" ]]; then
+		__installer_dbus_lib_apply_queue_set "$queue_file"
+	fi
+}
+
+installer_dbus_lib_remove() {
+	local manifest_file="${1:-}"
+	[[ -n "$manifest_file" && -f "$manifest_file" ]] || return 1
+	dbus_lib_remove_settings < "$manifest_file"
+}

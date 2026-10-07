@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+vt_make_test_root() {
+	local this_path;this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  mktemp -d "$this_path/output/vespera-tests.XXXXXX"
+}
+vt_set_conf_value() {
+  local name="$1"
+  local value="$2"
+  sed -i "s|^${name}=.*|${name}=${value}|" "$TEST_APP_ROOT/conf/vespera.conf"
+}
+
+vt_safe_rm_rf() {
+  local path="${1:-}"
+  [[ -n "$path" ]] || return 0
+  [[ "$path" == /tmp/vespera-tests.* || "$path" == /data/dev/addons/vespera/tests/output/vespera-tests.* || "$path" == */vespera-tests.* ]] || {
+    echo "refusing to remove non-test path: $path" >&2
+    return 1
+  }
+  rm -rf -- "$path"
+}

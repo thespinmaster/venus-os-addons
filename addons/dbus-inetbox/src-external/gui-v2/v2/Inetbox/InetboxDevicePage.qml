@@ -11,31 +11,6 @@ DevicePage {
 
 
 	settingsModel: VisibleItemModel {
-		// ListText {
-		// 	text: CommonWords.status
-		// 	dataItem.uid: root.bindPrefix + "/State"
-		// 	preferredVisible: dataItem.valid
-		// 	secondaryText: {
-		// 		switch (dataItem.value) {
-		// 		case 0:
-		// 			return CommonWords.ok
-		// 		case 1:
-		// 			return CommonWords.open_circuit
-		// 		case 2:
-		// 			//% "Short circuited"
-		// 			return qsTrId("temperature_short_circuited")
-		// 		case 3:
-		// 			//% "Reverse polarity"
-		// 			return qsTrId("temperature_reverse_polarity")
-		// 		case 5:
-		// 			//% "Sensor battery low"
-		// 			return qsTrId("temperature_sensor_battery_low")
-		// 		case 4: // status = Unknown
-		// 		default:
-		// 			return CommonWords.unknown_status
-		// 		}
-		// 	}
-		// }
 
 		ListText {
 			//% "Connected"
@@ -67,7 +42,7 @@ DevicePage {
 		ListText {
 			//% "Water"
 			text: qsTrId("inetbox_energy_water")
-			dataItem.uid:  bindPrefix + "/Values/WaterTargetTemp"
+			dataItem.uid:  root.bindPrefix + "/Values/WaterTargetTemp"
 			secondaryText: inetboxModel.valueTextFromModelValue(inetboxModel.waterModeModel, dataItem.value)
 		}
 

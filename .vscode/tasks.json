@@ -4,22 +4,35 @@
     {
       "id": "opkgPackage",
       "type": "promptString",
-      "description": "Package(s) (all or opkg-manager mount-shares themer etc)",
+      "description": "Package(s) (all or vespera mount-shares themer etc)",
       "default": ""
     },
     {
       "id": "opkgPromoteFeed",
       "type":"pickString",
-      "description": "Packages to promote (addons or opkg-manager)",
-      "options": ["all", "opkg-manager", "addons"],
+      "description": "Packages to promote (addons or vespera)",
+      "options": ["all", "vespera", "addons"],
       "default": "all"
+		},
+		{
+			"id": "bashCountPath",
+			"type": "promptString",
+			"description": "Path to scan for bash scripts",
+			"default": "${workspaceFolder}"
+		},
+		{
+			"id": "bashCountIncludeComments",
+			"type": "pickString",
+			"description": "Include full-line comments in count?",
+			"options": ["no", "yes"],
+			"default": "no"
     }
   ],
   "tasks": [
 		{
 			"label": "opkg build packages (develop)",
 			"type": "shell",
-			"command": "${workspaceFolder}/tasks/make-packages",
+			"command": "${workspaceFolder}/tasks/build-packages",
 			"args": [
 				"--develop-only",
 				"${input:opkgPackage}"
@@ -36,9 +49,29 @@
 			"detail": "Develop-only build with prompt for package."
 		},
 		{
+			"label": "opkg build packages (develop) all",
+			"type": "shell",
+			"command": "${workspaceFolder}/tasks/build-packages",
+			"args": [
+				"--develop-only",
+				"all"
+			],
+			"presentation": {
+				"echo": true,
+				"reveal": "always",
+				"focus": true,
+				"panel": "shared",
+				"showReuseMessage": false,
+				"clear": true
+			},
+			"problemMatcher": [],
+			"detail": "Develop-only build with prompt for package."
+
+		},
+		{
 			"label": "Promote develop feed to release",
 			"type": "shell",
-			"command": "${workspaceFolder}/tasks/make-packages",
+			"command": "${workspaceFolder}/tasks/build-packages",
 			"args": [
 				"--promote",
 				"${input:opkgPromoteFeed}"
@@ -81,12 +114,68 @@
 			"detail": "Finds and runs tests in all folders."
 		},
 		{
+			"label": "all tests (nearest tests folder)",
+			"type": "shell",
+			"problemMatcher": [],
+			"command": "${workspaceFolder}/tasks/run-tests-nearest",
+			"args": [
+				"${fileDirname}"
+			],
+			"presentation": {
+				"panel": "dedicated",
+				"reveal": "always",
+				"focus": true,
+				"showReuseMessage": false,
+				"clear": true,
+				"close": false
+			},
+			"detail": "Walks up from current file/folder, finds the nearest tests folder, and runs all tests there."
+		},
+		{
+			"label": "Bash -n current file",
+			"type": "shell",
+			"command": "bash",
+			"args": [
+				"-n",
+				"${file}"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"presentation": {
+				"reveal": "always",
+				"panel": "dedicated",
+				"clear": true
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Count bash lines under path",
+			"type": "shell",
+			"command": "${workspaceFolder}/tasks/count-bash-lines",
+			"args": [
+				"${input:bashCountPath}",
+				"--include-comments",
+				"${input:bashCountIncludeComments}"
+			],
+			"presentation": {
+				"echo": true,
+				"reveal": "always",
+				"focus": true,
+				"panel": "shared",
+				"showReuseMessage": false,
+				"clear": true
+			},
+			"problemMatcher": [],
+			"detail": "Count lines in bash scripts under a given path (comments excluded by default)."
+		},
+		{
 			"label": "run bash script",
 			"type": "shell",
 			"problemMatcher": [],
 			"command": "${workspaceFolder}/tasks/run-current-tests",
 			"args": [
-				"${workspaceFolder}/addons/opkg-manager/tests/serial-device-installer-tests"
+				"${workspaceFolder}/addons/vespera/tests/serial-device-installer-tests"
 			],
 			"presentation": {
 				"panel": "dedicated",
@@ -98,6 +187,26 @@
 				"preserveTerminalName": false,
 				"echo": false
 			}
+		},
+		{
+			"label": "tests for current file",
+			"type": "shell",
+			"problemMatcher": [],
+			"command": "${workspaceFolder}/tasks/run-tests-current-file",
+			"args": [
+				"${file}"
+			],
+			"presentation": {
+				"panel": "dedicated",
+				"reveal": "always",
+				"focus": true,
+				"showReuseMessage": false,
+				"clear": true,
+				"close": false,
+				"preserveTerminalName": false,
+				"echo": false
+			},
+			"detail": "Runs the matching test file for the active file, or the active test file itself."
 		},
 		{
 			"label": "build qmlplugin",
@@ -181,12 +290,12 @@
 				"showReuseMessage": false,
 				"clear": true
 			},
-			"detail": "Compile opkg-json-indexer with armhf toolchain and write output to opkg-bridge/opkg-json-indexer"
+			"detail": "Compile opkg-json-indexer with armhf toolchain and write output to service-commands/opkg-json-indexer"
 		},
 		{
 			"label": "cleanup opkg develop feed",
 			"type": "shell",
-			"command": "bash ${workspaceFolder}/tasks/make-packages",
+			"command": "bash ${workspaceFolder}/tasks/build-packages",
 			"args": [
 				"--clean-develop"
 			],
@@ -226,11 +335,10 @@
 			},
 			"problemMatcher": []
 		},
-		
 		{
-			"label": "Build opkg-manager Blind Install",
+			"label": "Build vespera Blind Install",
 			"type": "shell",
-			"command": "bash addons/opkg-manager/blind-install/build_tgz",
+			"command": "bash addons/vespera/blind-install/build_tgz",
 			"group": {
 				"kind": "build",
 				"isDefault": false

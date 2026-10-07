@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/../src/data/apps/available/vespera/libs/source-lib"
+. "$this_path/lib/vespera-test-fixtures"
+
+make_loader_file() {
+  local file_path="$1"
+  cat > "$file_path" <<'EOF'
+#!/usr/bin/env bash
+SOURCE_LIB_TEST_LOAD_COUNT="${SOURCE_LIB_TEST_LOAD_COUNT:-0}"
+SOURCE_LIB_TEST_LOAD_COUNT="$((SOURCE_LIB_TEST_LOAD_COUNT + 1))"
+EOF
+}
+
+test_addsource_root_path_sources_only_once_per_guard() {
+  source_lib_clear_source_guards
+
+  local root
+  root="$(vt_make_test_root)"
+  local loader="$root/loader-file"
+
+  SOURCE_LIB_TEST_LOAD_COUNT=0
+  make_loader_file "$loader"
+
+  addsource "$loader" root-path
+  addsource "$loader" root-path
+
+  assert_exitcode 0
+  assert_eq "1" "${SOURCE_LIB_TEST_LOAD_COUNT}"
+
+  vt_safe_rm_rf "$root"
+}
+
+test_addsource_failed_source_can_retry_after_file_exists() {
+  source_lib_clear_source_guards
+
+  local root
+  root="$(vt_make_test_root)"
+  local loader="$root/loader-file"
+
+  SOURCE_LIB_TEST_LOAD_COUNT=0
+  addsource "$loader" root-path 2>/dev/null
+  assert_exitcode_not 0
+  assert_eq "0" "${SOURCE_LIB_TEST_LOAD_COUNT}"
+
+  make_loader_file "$loader"
+  addsource "$loader" root-path
+
+  assert_exitcode 0
+  assert_eq "1" "${SOURCE_LIB_TEST_LOAD_COUNT}"
+
+  vt_safe_rm_rf "$root"
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

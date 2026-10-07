@@ -7,7 +7,7 @@ This add-on is primarily intended for users working over SSH on Venus OS.
 Use the Mount Shares helper script at:
 
 ```bash
-/data/mount-shares/mount-common
+/data/apps/mount-shares/mount-lib
 ```
 
 ## Common Commands
@@ -15,25 +15,25 @@ Use the Mount Shares helper script at:
 Mount and save a share configuration:
 
 ```bash
-/data/mount-shares/mount-common mount --targetpath /data/mnt/myshare -t cifs -o username=myuser,password=mypass,exec,mfsymlinks //192.168.1.10/share /data/mnt/myshare
+/data/apps/mount-shares/mount-lib mount --targetpath /data/mnt/myshare -t cifs -o username=myuser,password=mypass,exec,mfsymlinks //192.168.1.10/share /data/mnt/myshare
 ```
 
 Mount all saved shares:
 
 ```bash
-/data/mount-shares/mount-common mount-all
+/data/apps/mount-shares/mount-lib mount-all
 ```
 
 Interactive prompt mode (asks for type, source, target, and credentials):
 
 ```bash
-/data/mount-shares/mount-common
+/data/apps/mount-shares/mount-lib
 ```
 
 ## NFS Example
 
 ```bash
-/data/mount-shares/mount-common mount --targetpath /data/mnt/nfsmedia -t nfs 192.168.1.20:/export/media /data/mnt/nfsmedia
+/data/apps/mount-shares/mount-lib mount --targetpath /data/mnt/nfsmedia -t nfs 192.168.1.20:/export/media /data/mnt/nfsmedia
 ```
 
 ## Configuration File and Purpose
@@ -52,11 +52,11 @@ How it is used:
 
 ## Reboot Behavior
 
-Shares mounted through `mount-common mount` are automatically restored after reboot.
+Shares mounted through `mount-lib mount` are automatically restored after reboot.
 On startup, Mount Shares runs:
 
 ```bash
-/data/mount-shares/mount-common mount-all
+/data/apps/mount-shares/mount-lib mount-all
 ```
 
 This reads `/data/conf/mount-shares.conf` and remounts all saved entries.

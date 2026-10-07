@@ -99,9 +99,9 @@ usb_reconnect() {
   __usb_get_device "$port" usbdev
   [[ -z $usbdev ]] && { echo "ERROR: Device not found"; return 1; }
 
-  echo "$usbdev" > /sys/bus/usb/drivers/usb/unbind 1>/dev/null 2>/dev/null
+  echo "$usbdev" > /sys/bus/usb/drivers/usb/unbind 2>/dev/null
   sleep 2
-  echo "$usbdev" > /sys/bus/usb/drivers/usb/bind 1>/dev/null 2>/dev/null
+  echo "$usbdev" > /sys/bus/usb/drivers/usb/bind 2>/dev/null
   if ls -l "/dev/$port" 2>/dev/null; then
     echo "reconnect succeeded"
     return 0

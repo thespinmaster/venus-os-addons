@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_root="$this_path/../src/data/apps/available/vespera"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+
+TEST_ROOT=
+TEST_SCRIPT=
+
+stage_restart_runtime() {
+  TEST_ROOT="$(vt_make_test_root)"
+  mkdir -p "$TEST_ROOT/bin"
+
+  TEST_SCRIPT="$TEST_ROOT/restart-venus-services"
+  cp "$source_root/scripts/restart-venus-services" "$TEST_SCRIPT"
+  chmod +x "$TEST_SCRIPT"
+
+  cat > "$TEST_ROOT/bin/svc" <<'EOF'
+#!/usr/bin/env bash
+printf 'svc:%s\n' "$*" >> "$TEST_LOG"
+EOF
+  chmod +x "$TEST_ROOT/bin/svc"
+
+  mkdir -p "$TEST_ROOT/service-a" "$TEST_ROOT/service-b"
+
+  cat > "$TEST_ROOT/services-1.list" <<EOF
+$TEST_ROOT/service-a
+$TEST_ROOT/service-b
+EOF
+
+  cat > "$TEST_ROOT/services-2.list" <<EOF
+$TEST_ROOT/service-b
+$TEST_ROOT/missing-service
+# comment line
+EOF
+
+  : > "$TEST_ROOT/restart.log"
+}
+
+cleanup_restart_runtime() {
+  [[ -n "${TEST_ROOT:-}" ]] && vt_safe_rm_rf "$TEST_ROOT"
+}
+
+test_restart_venus_services_restarts_unique_existing_service_dirs() {
+  stage_restart_runtime
+
+  local output
+  output="$(TEST_LOG="$TEST_ROOT/restart.log" PATH="$TEST_ROOT/bin:$PATH" bash -c '
+    declare -a files=("$1" "$2")
+    . "$3" files 2
+  ' _ "$TEST_ROOT/services-1.list" "$TEST_ROOT/services-2.list" "$TEST_SCRIPT")"
+
+  assert_exitcode 0
+  assert_contains "restarting $TEST_ROOT/service-a" "$output"
+  assert_contains "restarting $TEST_ROOT/service-b" "$output"
+  assert_file_contains "$TEST_ROOT/restart.log" "svc:-t $TEST_ROOT/service-a"
+  assert_file_contains "$TEST_ROOT/restart.log" "svc:-t $TEST_ROOT/service-b"
+
+  local count
+  count="$(wc -l < "$TEST_ROOT/restart.log")"
+  assert_eq '2' "$count"
+
+  cleanup_restart_runtime
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

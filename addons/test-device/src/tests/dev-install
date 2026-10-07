@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -o nounset
- 
+
 declare this_path; this_path="$(dirname "${BASH_SOURCE[0]}")"
 
-$this_path/../data/installer "dev-install"
+"$this_path/../data/apps/test-device/installer" "dev-install"

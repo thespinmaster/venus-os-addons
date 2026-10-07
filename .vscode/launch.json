@@ -23,7 +23,7 @@
             "request": "launch",
             "name": "Bash - defined script",
             "cwd": "${workspaceFolder}",
-            "program": "${workspaceFolder}/addons/opkg-manager/tests/serial-device-installer-tests",
+            "program": "${workspaceFolder}/addons/vespera/tests/serial-device-installer-tests",
             "terminalKind": "integrated",
             "args": []
         },
@@ -52,17 +52,17 @@
                 "--debug_lin"]
         },
         {
-					"name": "opkg-manager",
-					"presentation": { "group": "opkg-manager"},
+					"name": "vespera",
+					"presentation": { "group": "vespera"},
 					"type": "debugpy",
 					"request": "launch",
 					"python": "/usr/bin/python",
                     "cwd": "${workspaceFolder}",
-					"program": "${workspaceFolder}/addons/opkg-manager/src/opt/victronenergy/opkg-manager/__main__.py",
+					"program": "${workspaceFolder}/addons/vespera/src/opt/victronenergy/vespera/__main__.py",
 					"console": "integratedTerminal",
                     "stopOnEntry": false,
                     "env": {
-                        "OPKG_MANAGER_LOG_LEVEL": "DEBUG"
+                        "VESPERA_LOG_LEVEL": "DEBUG"
                     },
                     "args": []
 			},
@@ -82,7 +82,7 @@
             "request": "launch",
             "name": "Python - opkg-make-index",
             "python": "/usr/bin/python",
-            "cwd": "${workspaceFolder}/feeds/opkg-manager",
+            "cwd": "${workspaceFolder}/feeds/vespera",
             "program": "${workspaceFolder}/tooling/opkg-utils/opkg-make-index",
             "args": ["-p", "Packages", "./"]
         },

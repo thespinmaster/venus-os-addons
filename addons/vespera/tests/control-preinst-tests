@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_control="/data/dev/addons/vespera/src/CONTROL/preinst"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+
+TEST_ROOT=
+SCRIPT_PATH=
+
+stage_preinst_runtime() {
+  TEST_ROOT="$(vt_make_test_root)"
+  SCRIPT_PATH="$TEST_ROOT/pkg/preinst"
+
+  mkdir -p "$TEST_ROOT/var/lock" "$TEST_ROOT/work" "$TEST_ROOT/pkg"
+
+  cp "$source_control" "$TEST_ROOT/preinst"
+  chmod +x "$TEST_ROOT/preinst"
+
+  cat > "$TEST_ROOT/pkg/control" <<'EOF'
+Package: demo
+EOF
+
+  cat > "$TEST_ROOT/pkg/installer-overlays" <<'EOF'
+/path/one
+EOF
+
+  cat > "$TEST_ROOT/pkg/overlay-lib" <<'EOF'
+#!/usr/bin/env bash
+printf 'overlay:%s\n' "$*" >> "$TEST_LOG"
+cat >/dev/null
+EOF
+  chmod +x "$TEST_ROOT/pkg/overlay-lib"
+
+  ln -s "$TEST_ROOT/work" "$TEST_ROOT/var/lock/vespera"
+  printf '2\n' > "$TEST_ROOT/work/verbosity"
+
+  mv "$TEST_ROOT/preinst" "$SCRIPT_PATH"
+}
+
+cleanup_preinst_runtime() {
+  [[ -n "${TEST_ROOT:-}" ]] && vt_safe_rm_rf "$TEST_ROOT"
+}
+
+test_control_preinst_registers_overlay_for_package() {
+  stage_preinst_runtime
+
+  TEST_LOG="$TEST_ROOT/preinst.log" VESPERA_ROOT="$TEST_ROOT" \
+    bash "$SCRIPT_PATH" configure >/dev/null 2>&1
+
+  assert_exitcode 0
+  assert_file_contains "$TEST_ROOT/preinst.log" 'overlay:overlay-register demo'
+
+  cleanup_preinst_runtime
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_control_preinst_registers_overlay_for_package
+fi

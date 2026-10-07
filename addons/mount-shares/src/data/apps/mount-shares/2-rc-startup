@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+"/data/apps/mount-shares/mount-lib" "mount-all"

@@ -26,7 +26,7 @@ DEVICE_TTY                               | string |          |
 SERIAL_STARTER_RULE               | string |          |
 SERVICE_PATH                      | string | required | /service 
 SERIAL_STARTER_START_SERVICE_PATH | string | required | /dev/serial-starter
-SERIAL_STARTER_RULES_FILE         | string | required | /home/admin/dev/projects/venus-os/addons/opkg-manager/tests/output/serial-starter.rules
+SERIAL_STARTER_RULES_FILE         | string | required | /home/admin/dev/projects/venus-os/addons/vespera/tests/output/serial-starter.rules
 SERIAL_STARTER_CONFIG_FILE        | string | required | /etc/venus/serial-starter.conf
 SERIAL_STARTER_CONFIG_TEXT_MATCH  | string |          | ^service ${DEVICE_SERVICE_NAME}[[:blank:]]*${DEVICE_SERVICE_NAME}
 SERIAL_STARTER_RULES_TEXT_MATCH   | string | required | RUN+="/opt/victronenergy/serial-starter/cleanup.sh %k"

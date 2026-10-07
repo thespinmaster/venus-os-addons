@@ -1,545 +1,649 @@
 #define _DEFAULT_SOURCE
 #define _POSIX_C_SOURCE 200809L
 
+#include <ctype.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <sys/stat.h>
-#include <dirent.h>
-#include <ctype.h>
+#include <unistd.h>
 
 #define MAX_LINE 2048
 #define MAX_FIELD 256
 #define MAX_FIELDS 50
-#define CACHE_DIR "/tmp/opkg-manager"
-#define OPKG_CONFIG "/etc/opkg/opkg-manager.conf"
-#define OPKG_STATUS "/usr/lib/opkg/status"
-#define OPKG_LISTS_DIR "/usr/lib/opkg/lists"
+#define MAX_FEEDS 256
+#define OPKG_JSON_INDEXER_VERSION "1.1.0"
+#define APPS_ENABLED_DIR "/data/apps/enabled"
+#define APPS_AVAILABLE_DIR "/data/apps/available"
 
 static const char *const builtin_feeds[] = {
-		"opkg-manager",
-		NULL
+	"vespera",
+	NULL
 };
 
 typedef struct {
-		char key[MAX_FIELD];
-		char value[MAX_LINE];
+	char key[MAX_FIELD];
+	char value[MAX_LINE];
 } Field;
 
 typedef struct {
-		Field fields[MAX_FIELDS];
-		int field_count;
+	Field fields[MAX_FIELDS];
+	int field_count;
 } Package;
 
-/* Simple JSON escaping for string values */
-static void json_escape_print(FILE *fp, const char *str) {
-		if (!str) return;
-		fputc('"', fp);
-		while (*str) {
-				switch (*str) {
-						case '"':
-								fputs("\\\"", fp);
-								break;
-						case '\\':
-								fputs("\\\\", fp);
-								break;
-						case '\n':
-								fputs("\\n", fp);
-								break;
-						case '\r':
-								fputs("\\r", fp);
-								break;
-						case '\t':
-								fputs("\\t", fp);
-								break;
-						default:
-								if ((unsigned char)*str < 32) {
-										fprintf(fp, "\\u%04x", (unsigned char)*str);
-								} else {
-										fputc(*str, fp);
-								}
-				}
-				str++;
-		}
-		fputc('"', fp);
-}
-
-/* Trim leading/trailing whitespace */
-static void trim(char *str) {
-		if (!str) return;
-		char *start = str;
-		while (*start && isspace((unsigned char)*start)) start++;
-		char *end = start + strlen(start) - 1;
-		while (end >= start && isspace((unsigned char)*end)) end--;
-		*(end + 1) = '\0';
-		memmove(str, start, strlen(start) + 1);
-}
-
-/* Normalize field names (lowercase, replace - with _) */
-static void normalize_field_name(const char *input, char *output, size_t outlen) {
-		size_t i = 0;
-		for (; input[i] && i < outlen - 1; i++) {
-				char c = input[i];
-				if (c == '-') {
-						output[i] = '_';
-				} else if (c == ' ') {
-						output[i] = '_';
-				} else {
-						output[i] = tolower((unsigned char)c);
-				}
-		}
-		output[i] = '\0';
-}
-
 typedef struct {
-		char name[MAX_FIELD];
-		char version[MAX_FIELD];
+	char name[MAX_FIELD];
+	char version[MAX_FIELD];
 } InstalledEntry;
 
 typedef struct {
-		InstalledEntry *items;
-		size_t count;
-		size_t capacity;
+	InstalledEntry *items;
+	size_t count;
+	size_t capacity;
 } InstalledMap;
 
-static size_t parse_base_version_parts(const char *version, unsigned long *parts, size_t max_parts, const char **suffix_start)
+typedef struct {
+	char name[MAX_FIELD];
+	char url[MAX_LINE];
+} FeedEntry;
+
+typedef struct {
+	char lists_dir[PATH_MAX];
+	char status_file[PATH_MAX];
+	FeedEntry feeds[MAX_FEEDS];
+	int feed_count;
+} OpkgConfig;
+
+typedef enum {
+	UPDATE_ALL = 0,
+	UPDATE_FEEDS = 1,
+	UPDATE_PACKAGES = 2,
+	UPDATE_NONE = 3
+} UpdateMode;
+
+static void json_escape_print(FILE *fp, const char *str)
 {
-		const char *p = version ? version : "";
-		size_t count = 0;
+	if (!str) {
+		return;
+	}
 
-		while (*p && isspace((unsigned char)*p)) {
-				p++;
-		}
-
-		if (!isdigit((unsigned char)*p)) {
-				if (suffix_start) {
-						*suffix_start = p;
-				}
-				return 0;
-		}
-
-		while (*p && isdigit((unsigned char)*p)) {
-				char *end = NULL;
-				unsigned long value = strtoul(p, &end, 10);
-				if (count < max_parts) {
-						parts[count++] = value;
-				}
-				p = end;
-
-				if (*p == '.' && isdigit((unsigned char)p[1])) {
-						p++;
-						continue;
-				}
+	fputc('"', fp);
+	while (*str) {
+		switch (*str) {
+			case '"':
+				fputs("\\\"", fp);
 				break;
+			case '\\':
+				fputs("\\\\", fp);
+				break;
+			case '\n':
+				fputs("\\n", fp);
+				break;
+			case '\r':
+				fputs("\\r", fp);
+				break;
+			case '\t':
+				fputs("\\t", fp);
+				break;
+			default:
+				if ((unsigned char)*str < 32) {
+					fprintf(fp, "\\u%04x", (unsigned char)*str);
+				} else {
+					fputc(*str, fp);
+				}
 		}
+		str++;
+	}
+	fputc('"', fp);
+}
 
-		if (suffix_start) {
-				*suffix_start = p;
+static void trim(char *str)
+{
+	if (!str) {
+		return;
+	}
+
+	char *start = str;
+	while (*start && isspace((unsigned char)*start)) {
+		start++;
+	}
+
+	if (*start == '\0') {
+		str[0] = '\0';
+		return;
+	}
+
+	char *end = start + strlen(start) - 1;
+	while (end >= start && isspace((unsigned char)*end)) {
+		end--;
+	}
+	*(end + 1) = '\0';
+	memmove(str, start, strlen(start) + 1);
+}
+
+static void normalize_field_name(const char *input, char *output, size_t outlen)
+{
+	size_t i = 0;
+	for (; input[i] && i < outlen - 1; i++) {
+		char c = input[i];
+		if (c == '-' || c == ' ') {
+			output[i] = '_';
+		} else {
+			output[i] = (char)tolower((unsigned char)c);
 		}
-		return count;
+	}
+	output[i] = '\0';
+}
+
+static size_t parse_base_version_parts(const char *version,
+								   unsigned long *parts,
+								   size_t max_parts,
+								   const char **suffix_start)
+{
+	const char *p = version ? version : "";
+	size_t count = 0;
+
+	while (*p && isspace((unsigned char)*p)) {
+		p++;
+	}
+
+	if (!isdigit((unsigned char)*p)) {
+		if (suffix_start) {
+			*suffix_start = p;
+		}
+		return 0;
+	}
+
+	while (*p && isdigit((unsigned char)*p)) {
+		char *end = NULL;
+		unsigned long value = strtoul(p, &end, 10);
+		if (count < max_parts) {
+			parts[count++] = value;
+		}
+		p = end;
+
+		if (*p == '.' && isdigit((unsigned char)p[1])) {
+			p++;
+			continue;
+		}
+		break;
+	}
+
+	if (suffix_start) {
+		*suffix_start = p;
+	}
+	return count;
 }
 
 static size_t parse_suffix_numbers(const char *suffix, unsigned long *parts, size_t max_parts)
 {
-		const char *p = suffix ? suffix : "";
-		size_t count = 0;
+	const char *p = suffix ? suffix : "";
+	size_t count = 0;
 
-		while (*p) {
-				if (!isdigit((unsigned char)*p)) {
-						p++;
-						continue;
-				}
-
-				char *end = NULL;
-				unsigned long value = strtoul(p, &end, 10);
-				if (count < max_parts) {
-						parts[count++] = value;
-				}
-				p = end;
+	while (*p) {
+		if (!isdigit((unsigned char)*p)) {
+			p++;
+			continue;
 		}
 
-		return count;
+		char *end = NULL;
+		unsigned long value = strtoul(p, &end, 10);
+		if (count < max_parts) {
+			parts[count++] = value;
+		}
+		p = end;
+	}
+
+	return count;
 }
 
 static int compare_numeric_parts(const unsigned long *a,
-																	size_t a_count,
-																	const unsigned long *b,
-																	size_t b_count)
+								 size_t a_count,
+								 const unsigned long *b,
+								 size_t b_count)
 {
-		size_t max_count = a_count > b_count ? a_count : b_count;
+	size_t max_count = a_count > b_count ? a_count : b_count;
 
-		for (size_t i = 0; i < max_count; ++i) {
-				unsigned long av = i < a_count ? a[i] : 0;
-				unsigned long bv = i < b_count ? b[i] : 0;
-				if (av > bv) {
-						return 1;
-				}
-				if (av < bv) {
-						return -1;
-				}
+	for (size_t i = 0; i < max_count; ++i) {
+		unsigned long av = i < a_count ? a[i] : 0;
+		unsigned long bv = i < b_count ? b[i] : 0;
+		if (av > bv) {
+			return 1;
 		}
+		if (av < bv) {
+			return -1;
+		}
+	}
 
-		return 0;
+	return 0;
 }
 
 static int version_greater_than(const char *candidate, const char *installed)
 {
-		unsigned long base_candidate[32] = {0};
-		unsigned long base_installed[32] = {0};
-		unsigned long suffix_candidate[32] = {0};
-		unsigned long suffix_installed[32] = {0};
-		const char *suffix_candidate_start = NULL;
-		const char *suffix_installed_start = NULL;
+	unsigned long base_candidate[32] = {0};
+	unsigned long base_installed[32] = {0};
+	unsigned long suffix_candidate[32] = {0};
+	unsigned long suffix_installed[32] = {0};
+	const char *suffix_candidate_start = NULL;
+	const char *suffix_installed_start = NULL;
 
-		size_t base_candidate_count = parse_base_version_parts(candidate,
-																														base_candidate,
-																														sizeof(base_candidate) / sizeof(base_candidate[0]),
-																														&suffix_candidate_start);
-		size_t base_installed_count = parse_base_version_parts(installed,
-																														base_installed,
-																														sizeof(base_installed) / sizeof(base_installed[0]),
-																														&suffix_installed_start);
-		int base_cmp = compare_numeric_parts(base_candidate,
-																					base_candidate_count,
-																					base_installed,
-																					base_installed_count);
-		if (base_cmp > 0) {
-				return 1;
-		}
-		if (base_cmp < 0) {
-				return 0;
-		}
+	size_t base_candidate_count = parse_base_version_parts(candidate,
+												   base_candidate,
+												   sizeof(base_candidate) / sizeof(base_candidate[0]),
+												   &suffix_candidate_start);
+	size_t base_installed_count = parse_base_version_parts(installed,
+												   base_installed,
+												   sizeof(base_installed) / sizeof(base_installed[0]),
+												   &suffix_installed_start);
+	int base_cmp = compare_numeric_parts(base_candidate,
+									 base_candidate_count,
+									 base_installed,
+									 base_installed_count);
+	if (base_cmp > 0) {
+		return 1;
+	}
+	if (base_cmp < 0) {
+		return 0;
+	}
 
-		size_t suffix_candidate_count = parse_suffix_numbers(suffix_candidate_start,
-																													suffix_candidate,
-																													sizeof(suffix_candidate) / sizeof(suffix_candidate[0]));
-		size_t suffix_installed_count = parse_suffix_numbers(suffix_installed_start,
-																													suffix_installed,
-																													sizeof(suffix_installed) / sizeof(suffix_installed[0]));
-		return compare_numeric_parts(suffix_candidate,
-																	suffix_candidate_count,
-																	suffix_installed,
-																	suffix_installed_count) > 0;
+	size_t suffix_candidate_count = parse_suffix_numbers(suffix_candidate_start,
+												 suffix_candidate,
+												 sizeof(suffix_candidate) / sizeof(suffix_candidate[0]));
+	size_t suffix_installed_count = parse_suffix_numbers(suffix_installed_start,
+												 suffix_installed,
+												 sizeof(suffix_installed) / sizeof(suffix_installed[0]));
+	return compare_numeric_parts(suffix_candidate,
+								 suffix_candidate_count,
+								 suffix_installed,
+								 suffix_installed_count) > 0;
 }
 
 static void split_version_info(const char *version,
-																	char *base_out,
-																	size_t base_out_len,
-																	char *suffix_out,
-																	size_t suffix_out_len)
+							   char *base_out,
+							   size_t base_out_len,
+							   char *suffix_out,
+							   size_t suffix_out_len)
 {
-		unsigned long ignored_parts[32] = {0};
-		const char *suffix_start = NULL;
+	unsigned long ignored_parts[32] = {0};
+	const char *suffix_start = NULL;
 
-		if (!base_out || base_out_len == 0 || !suffix_out || suffix_out_len == 0) {
-				return;
-		}
+	if (!base_out || base_out_len == 0 || !suffix_out || suffix_out_len == 0) {
+		return;
+	}
 
-		base_out[0] = '\0';
-		suffix_out[0] = '\0';
+	base_out[0] = '\0';
+	suffix_out[0] = '\0';
 
-		if (!version || version[0] == '\0') {
-				return;
-		}
+	if (!version || version[0] == '\0') {
+		return;
+	}
 
-		parse_base_version_parts(version,
-															ignored_parts,
-															sizeof(ignored_parts) / sizeof(ignored_parts[0]),
-															&suffix_start);
+	parse_base_version_parts(version,
+						 ignored_parts,
+						 sizeof(ignored_parts) / sizeof(ignored_parts[0]),
+						 &suffix_start);
 
-		if (!suffix_start || suffix_start <= version) {
-				snprintf(base_out, base_out_len, "%s", version);
-				return;
-		}
+	if (!suffix_start || suffix_start <= version) {
+		snprintf(base_out, base_out_len, "%s", version);
+		return;
+	}
 
-		size_t base_len = (size_t)(suffix_start - version);
-		if (base_len >= base_out_len) {
-				base_len = base_out_len - 1;
-		}
-		memcpy(base_out, version, base_len);
-		base_out[base_len] = '\0';
+	size_t base_len = (size_t)(suffix_start - version);
+	if (base_len >= base_out_len) {
+		base_len = base_out_len - 1;
+	}
+	memcpy(base_out, version, base_len);
+	base_out[base_len] = '\0';
 
-		if (*suffix_start != '\0') {
-				snprintf(suffix_out, suffix_out_len, "%s", suffix_start);
-		}
+	if (*suffix_start != '\0') {
+		snprintf(suffix_out, suffix_out_len, "%s", suffix_start);
+	}
 }
 
 static int append_installed_entry(InstalledMap *map, const char *name, const char *version)
 {
-		if (!map || !name) {
-				return 0;
-		}
+	if (!map || !name) {
+		return 0;
+	}
 
-		if (map->count == map->capacity) {
-				size_t new_capacity = map->capacity == 0 ? 64 : map->capacity * 2;
-				InstalledEntry *new_items = (InstalledEntry *)realloc(map->items, new_capacity * sizeof(*new_items));
-				if (!new_items) {
-						return 0;
-				}
-				map->items = new_items;
-				map->capacity = new_capacity;
+	if (map->count == map->capacity) {
+		size_t new_capacity = map->capacity == 0 ? 64 : map->capacity * 2;
+		InstalledEntry *new_items = (InstalledEntry *)realloc(map->items, new_capacity * sizeof(*new_items));
+		if (!new_items) {
+			return 0;
 		}
+		map->items = new_items;
+		map->capacity = new_capacity;
+	}
 
-		snprintf(map->items[map->count].name, sizeof(map->items[map->count].name), "%s", name);
-		snprintf(map->items[map->count].version, sizeof(map->items[map->count].version), "%s", version ? version : "");
-		map->count++;
-		return 1;
+	snprintf(map->items[map->count].name, sizeof(map->items[map->count].name), "%s", name);
+	snprintf(map->items[map->count].version, sizeof(map->items[map->count].version), "%s", version ? version : "");
+	map->count++;
+	return 1;
 }
 
 static const char *lookup_installed_version(const InstalledMap *map, const char *name)
 {
-		if (!map || !name) {
-				return "";
-		}
-		for (size_t i = 0; i < map->count; ++i) {
-				if (strcmp(map->items[i].name, name) == 0) {
-						return map->items[i].version;
-				}
-		}
+	if (!map || !name) {
 		return "";
+	}
+
+	for (size_t i = 0; i < map->count; ++i) {
+		if (strcmp(map->items[i].name, name) == 0) {
+			return map->items[i].version;
+		}
+	}
+
+	return "";
 }
 
 static void free_installed_map(InstalledMap *map)
 {
-		if (!map) {
-				return;
-		}
-		free(map->items);
-		map->items = NULL;
-		map->count = 0;
-		map->capacity = 0;
+	if (!map) {
+		return;
+	}
+
+	free(map->items);
+	map->items = NULL;
+	map->count = 0;
+	map->capacity = 0;
 }
 
-static int parse_installed_status(InstalledMap *map)
+static int parse_installed_status(const char *status_file, InstalledMap *map)
 {
-		FILE *fp = fopen(OPKG_STATUS, "r");
-		if (!fp) {
-				return 0;
-		}
+	FILE *fp = fopen(status_file, "r");
+	if (!fp) {
+		return 0;
+	}
 
-		char line[MAX_LINE];
-		char package[MAX_FIELD] = "";
-		char version[MAX_FIELD] = "";
-		char status[MAX_LINE] = "";
+	char line[MAX_LINE];
+	char package[MAX_FIELD] = "";
+	char version[MAX_FIELD] = "";
+	char status[MAX_LINE] = "";
 
-		while (fgets(line, sizeof(line), fp)) {
-				line[strcspn(line, "\n")] = '\0';
+	while (fgets(line, sizeof(line), fp)) {
+		line[strcspn(line, "\n")] = '\0';
 
-				if (line[0] == '\0') {
-						if (package[0] != '\0' && strstr(status, "installed") != NULL) {
-								if (!append_installed_entry(map, package, version)) {
-										fclose(fp);
-										return 0;
-								}
-						}
-						package[0] = '\0';
-						version[0] = '\0';
-						status[0] = '\0';
-						continue;
-				}
-
-				char *colon = strchr(line, ':');
-				if (!colon) {
-						continue;
-				}
-
-				*colon = '\0';
-				char *key = line;
-				char *value = colon + 1;
-				trim(key);
-				trim(value);
-
-				if (strcmp(key, "Package") == 0) {
-						snprintf(package, sizeof(package), "%s", value);
-				} else if (strcmp(key, "Version") == 0) {
-						snprintf(version, sizeof(version), "%s", value);
-				} else if (strcmp(key, "Status") == 0) {
-						snprintf(status, sizeof(status), "%s", value);
-				}
-		}
-
-		if (package[0] != '\0' && strstr(status, "installed") != NULL) {
+		if (line[0] == '\0') {
+			if (package[0] != '\0' && strstr(status, "installed") != NULL) {
 				if (!append_installed_entry(map, package, version)) {
-						fclose(fp);
-						return 0;
+					fclose(fp);
+					return 0;
 				}
+			}
+			package[0] = '\0';
+			version[0] = '\0';
+			status[0] = '\0';
+			continue;
 		}
 
-		fclose(fp);
-		return 1;
+		char *colon = strchr(line, ':');
+		if (!colon) {
+			continue;
+		}
+
+		*colon = '\0';
+		char *key = line;
+		char *value = colon + 1;
+		trim(key);
+		trim(value);
+
+		if (strcmp(key, "Package") == 0) {
+			snprintf(package, sizeof(package), "%s", value);
+		} else if (strcmp(key, "Version") == 0) {
+			snprintf(version, sizeof(version), "%s", value);
+		} else if (strcmp(key, "Status") == 0) {
+			snprintf(status, sizeof(status), "%s", value);
+		}
+	}
+
+	if (package[0] != '\0' && strstr(status, "installed") != NULL) {
+		if (!append_installed_entry(map, package, version)) {
+			fclose(fp);
+			return 0;
+		}
+	}
+
+	fclose(fp);
+	return 1;
 }
-
-static int load_feed_names(char feed_names[][MAX_FIELD], int max_feeds)
-{
-		FILE *fp = fopen(OPKG_CONFIG, "r");
-		if (!fp) {
-				return 0;
-		}
-
-		int feed_count = 0;
-		char line[MAX_LINE];
-
-		while (fgets(line, sizeof(line), fp) && feed_count < max_feeds) {
-				line[strcspn(line, "\n")] = '\0';
-				trim(line);
-				if (!line[0] || line[0] == '#') {
-						continue;
-				}
-
-				char *type = strtok(line, " \t");
-				if (!type) {
-						continue;
-				}
-
-				char *name = strtok(NULL, " \t");
-				if (!name) {
-						continue;
-				}
-
-				char *url = strtok(NULL, " \t");
-				if (!url) {
-						continue;
-				}
-
-				snprintf(feed_names[feed_count], MAX_FIELD, "%s", name);
-				feed_count++;
-		}
-
-		fclose(fp);
-		return feed_count;
-}
-
-
 
 static int feed_is_builtin(const char *name)
 {
-		if (!name) {
-				return 0;
-		}
-
-		for (int i = 0; builtin_feeds[i]; ++i) {
-				if (strcmp(name, builtin_feeds[i]) == 0) {
-						return 1;
-				}
-		}
-
+	if (!name) {
 		return 0;
+	}
+
+	for (int i = 0; builtin_feeds[i]; ++i) {
+		if (strcmp(name, builtin_feeds[i]) == 0) {
+			return 1;
+		}
+	}
+
+	return 0;
 }
 
-/* Parse an opkg stanza file and extract fields */
-static void flush_package_json(const Package *pkg,
-																const char *feed_name,
-																FILE *out_json,
-																int *first_item,
-																const InstalledMap *installed_map)
+static int parse_opkg_config(const char *config_path, OpkgConfig *cfg)
 {
-		if (!pkg || pkg->field_count <= 0) {
-				return;
+	FILE *fp = fopen(config_path, "r");
+	if (!fp) {
+		fprintf(stderr, "Error: cannot read config: %s\n", config_path);
+		return 0;
+	}
+
+	memset(cfg, 0, sizeof(*cfg));
+
+	char line[MAX_LINE];
+	while (fgets(line, sizeof(line), fp)) {
+		line[strcspn(line, "\n")] = '\0';
+		trim(line);
+
+		if (!line[0] || line[0] == '#') {
+			continue;
 		}
 
-		const char *package_name = NULL;
-		const char *package_version = "";
-		const char *installed_version = "";
-		const char *available_version = "";
-		const char *field_name = "";
-		char installed_version_base[MAX_FIELD] = "";
-		char installed_version_suffix[MAX_FIELD] = "";
-		char available_version_base[MAX_FIELD] = "";
-		char available_version_suffix[MAX_FIELD] = "";
-		int first_field = 1;
+		char token1[MAX_FIELD] = "";
+		char token2[MAX_FIELD] = "";
+		char token3[MAX_LINE] = "";
 
-		if (!*first_item) {
-				fputs(",", out_json);
-		}
-		fputs("{", out_json);
-
-		for (int i = 0; i < pkg->field_count; i++) {
-				field_name = pkg->fields[i].key;
-				if (strcmp(field_name, "package") == 0) {
-						field_name = "packageName";
-						package_name = pkg->fields[i].value;
-				} else if (strcmp(field_name, "version") == 0) {
-						package_version = pkg->fields[i].value;
-						continue;
-				}
-
-				if (!first_field) {
-						fputs(",", out_json);
-				}
-				first_field = 0;
-				fprintf(out_json, "\"%s\":", field_name);
-				json_escape_print(out_json, pkg->fields[i].value);
+		if (sscanf(line, "%255s %255s %2047s", token1, token2, token3) != 3) {
+			continue;
 		}
 
-		if (feed_name) {
-				if (!first_field) {
-						fputs(",", out_json);
-				}
-				fputs("\"feed\":", out_json);
-				json_escape_print(out_json, feed_name);
-				first_field = 0;
+		if (strcmp(token1, "option") == 0) {
+			if (strcmp(token2, "lists_dir") == 0) {
+				snprintf(cfg->lists_dir, sizeof(cfg->lists_dir), "%s", token3);
+			} else if (strcmp(token2, "status_file") == 0) {
+				snprintf(cfg->status_file, sizeof(cfg->status_file), "%s", token3);
+			}
+			continue;
 		}
 
-		/* Always include installed_version and derived available_version for package list entries. */
-		if (installed_map) {
-				installed_version = lookup_installed_version(installed_map, package_name);
-
-				split_version_info(installed_version,
-															installed_version_base,
-															sizeof(installed_version_base),
-															installed_version_suffix,
-															sizeof(installed_version_suffix));
-
-				if (!first_field) {
-						fputs(",", out_json);
-				}
-				fputs("\"installedVersion\":", out_json);
-				json_escape_print(out_json, installed_version_base);
-				fputs(",\"installedVersionSuffix\":", out_json);
-				json_escape_print(out_json, installed_version_suffix);
-				first_field = 0;
-
-				if (installed_version[0] != '\0') {
-						available_version = version_greater_than(package_version, installed_version)
-								? package_version
-								: "";
-				} else {
-						available_version = package_version;
-				}
-
-				if (package_version[0] == '\0') {
-						available_version = "";
-				}
+		if ((strcmp(token1, "src/gz") == 0 || strcmp(token1, "src") == 0) && cfg->feed_count < MAX_FEEDS) {
+			snprintf(cfg->feeds[cfg->feed_count].name, sizeof(cfg->feeds[cfg->feed_count].name), "%s", token2);
+			snprintf(cfg->feeds[cfg->feed_count].url, sizeof(cfg->feeds[cfg->feed_count].url), "%s", token3);
+			cfg->feed_count++;
 		}
+	}
 
-		split_version_info(available_version,
-													available_version_base,
-													sizeof(available_version_base),
-													available_version_suffix,
-													sizeof(available_version_suffix));
+	fclose(fp);
+
+	if (cfg->lists_dir[0] == '\0') {
+		fprintf(stderr, "Error: missing option lists_dir in config\n");
+		return 0;
+	}
+	if (cfg->status_file[0] == '\0') {
+		fprintf(stderr, "Error: missing option status_file in config\n");
+		return 0;
+	}
+
+	return 1;
+}
+
+static int is_package_enabled(const char *package_name)
+{
+	if (!package_name || package_name[0] == '\0') {
+		return 0;
+	}
+
+	char enabled_path[PATH_MAX];
+	char expected_target[PATH_MAX];
+	char link_target[PATH_MAX];
+
+	if (snprintf(enabled_path,
+				 sizeof(enabled_path),
+				 "%s/%s",
+				 APPS_ENABLED_DIR,
+				 package_name) >= (int)sizeof(enabled_path)) {
+		return 0;
+	}
+
+	if (snprintf(expected_target,
+				 sizeof(expected_target),
+				 "%s/%s",
+				 APPS_AVAILABLE_DIR,
+				 package_name) >= (int)sizeof(expected_target)) {
+		return 0;
+	}
+
+	struct stat st;
+	if (lstat(enabled_path, &st) != 0 || !S_ISLNK(st.st_mode)) {
+		return 0;
+	}
+
+	ssize_t link_len = readlink(enabled_path, link_target, sizeof(link_target) - 1);
+	if (link_len < 0) {
+		return 0;
+	}
+	link_target[link_len] = '\0';
+
+	return strcmp(link_target, expected_target) == 0;
+}
+
+static void flush_package_json(const Package *pkg,
+							   const char *feed_name,
+							   FILE *out_json,
+							   int *first_item,
+							   const InstalledMap *installed_map)
+{
+	if (!pkg || pkg->field_count <= 0) {
+		return;
+	}
+
+	const char *package_name = NULL;
+	const char *package_version = "";
+	const char *installed_version = "";
+	const char *available_version = "";
+	const char *field_name = "";
+	char installed_version_base[MAX_FIELD] = "";
+	char installed_version_suffix[MAX_FIELD] = "";
+	char available_version_base[MAX_FIELD] = "";
+	char available_version_suffix[MAX_FIELD] = "";
+	int package_enabled = 0;
+	int first_field = 1;
+
+	if (!*first_item) {
+		fputs(",", out_json);
+	}
+	fputs("{", out_json);
+
+	for (int i = 0; i < pkg->field_count; i++) {
+		field_name = pkg->fields[i].key;
+		if (strcmp(field_name, "package") == 0) {
+			field_name = "packageName";
+			package_name = pkg->fields[i].value;
+		} else if (strcmp(field_name, "version") == 0) {
+			package_version = pkg->fields[i].value;
+			continue;
+		}
 
 		if (!first_field) {
-				fputs(",", out_json);
+			fputs(",", out_json);
 		}
-		fputs("\"availableVersion\":", out_json);
-		json_escape_print(out_json, available_version_base);
-		fputs(",\"availableVersionSuffix\":", out_json);
-		json_escape_print(out_json, available_version_suffix);
+		first_field = 0;
+		fprintf(out_json, "\"%s\":", field_name);
+		json_escape_print(out_json, pkg->fields[i].value);
+	}
 
-		fputs("}", out_json);
-		*first_item = 0;
+	if (feed_name) {
+		if (!first_field) {
+			fputs(",", out_json);
+		}
+		fputs("\"feed\":", out_json);
+		json_escape_print(out_json, feed_name);
+		first_field = 0;
+	}
+
+	package_enabled = is_package_enabled(package_name);
+	if (!first_field) {
+		fputs(",", out_json);
+	}
+	fputs("\"enabled\":", out_json);
+	fputs(package_enabled ? "true" : "false", out_json);
+	first_field = 0;
+
+	if (installed_map) {
+		installed_version = lookup_installed_version(installed_map, package_name);
+
+		split_version_info(installed_version,
+						   installed_version_base,
+						   sizeof(installed_version_base),
+						   installed_version_suffix,
+						   sizeof(installed_version_suffix));
+
+		if (!first_field) {
+			fputs(",", out_json);
+		}
+		fputs("\"installedVersion\":", out_json);
+		json_escape_print(out_json, installed_version_base);
+		fputs(",\"installedVersionSuffix\":", out_json);
+		json_escape_print(out_json, installed_version_suffix);
+		first_field = 0;
+
+		if (installed_version[0] != '\0') {
+			available_version = version_greater_than(package_version, installed_version)
+				? package_version
+				: "";
+		} else {
+			available_version = package_version;
+		}
+
+		if (package_version[0] == '\0') {
+			available_version = "";
+		}
+	}
+
+	split_version_info(available_version,
+					   available_version_base,
+					   sizeof(available_version_base),
+					   available_version_suffix,
+					   sizeof(available_version_suffix));
+
+	if (!first_field) {
+		fputs(",", out_json);
+	}
+	fputs("\"availableVersion\":", out_json);
+	json_escape_print(out_json, available_version_base);
+	fputs(",\"availableVersionSuffix\":", out_json);
+	json_escape_print(out_json, available_version_suffix);
+
+	fputs("}", out_json);
+	*first_item = 0;
 }
 
 static int parse_stanza_file(const char *filepath,
-															const char *feed_name,
-															FILE *out_json,
-															int *first_item,
-															const InstalledMap *installed_map,
-															const char *const *allowed_fields,
-															int allowed_count) {
+						 const char *feed_name,
+						 FILE *out_json,
+						 int *first_item,
+						 const InstalledMap *installed_map,
+						 const char *const *allowed_fields,
+						 int allowed_count)
+{
 	FILE *fp = fopen(filepath, "r");
-	if (!fp) return 0;
+	if (!fp) {
+		return 0;
+	}
 
 	char line[MAX_LINE];
 	Package pkg;
@@ -547,64 +651,61 @@ static int parse_stanza_file(const char *filepath,
 	memset(&pkg, 0, sizeof(pkg));
 
 	while (fgets(line, sizeof(line), fp)) {
-		/* Remove trailing newline */
 		line[strcspn(line, "\n")] = '\0';
 
-		/* Blank line separates stanzas */
 		if (strlen(line) == 0) {
-				flush_package_json(&pkg,
-														feed_name,
-														out_json,
-														first_item,
-														installed_map);
-				memset(&pkg, 0, sizeof(pkg));
-				last_kept_index = -1;
-				continue;
+			flush_package_json(&pkg, feed_name, out_json, first_item, installed_map);
+			memset(&pkg, 0, sizeof(pkg));
+			last_kept_index = -1;
+			continue;
 		}
 
-		/* Handle continuation lines (start with space) */
 		if (line[0] == ' ' && last_kept_index >= 0) {
-				char *value = line;
-				while (*value && isspace((unsigned char)*value)) value++;
-				if (strstr(pkg.fields[last_kept_index].value, value) != NULL) {
-						continue;
-				}
-				size_t cur_len = strlen(pkg.fields[last_kept_index].value);
-				size_t value_len = strlen(value);
-				if (cur_len < (MAX_LINE - 1) && value_len > 0) {
-						char *dest = pkg.fields[last_kept_index].value;
-						size_t pos = cur_len;
+			char *value = line;
+			while (*value && isspace((unsigned char)*value)) {
+				value++;
+			}
 
-						if (pos > 0 && pos < (MAX_LINE - 1)) {
-								dest[pos++] = ' ';
-						}
-
-						if (pos < (MAX_LINE - 1)) {
-								size_t copy_len = value_len;
-								size_t avail = (MAX_LINE - 1) - pos;
-								if (copy_len > avail) {
-										copy_len = avail;
-								}
-								memcpy(dest + pos, value, copy_len);
-								pos += copy_len;
-								dest[pos] = '\0';
-						}
-				}
+			if (strstr(pkg.fields[last_kept_index].value, value) != NULL) {
 				continue;
+			}
+
+			size_t cur_len = strlen(pkg.fields[last_kept_index].value);
+			size_t value_len = strlen(value);
+			if (cur_len < (MAX_LINE - 1) && value_len > 0) {
+				char *dest = pkg.fields[last_kept_index].value;
+				size_t pos = cur_len;
+
+				if (pos > 0 && pos < (MAX_LINE - 1)) {
+					dest[pos++] = ' ';
+				}
+
+				if (pos < (MAX_LINE - 1)) {
+					size_t copy_len = value_len;
+					size_t avail = (MAX_LINE - 1) - pos;
+					if (copy_len > avail) {
+						copy_len = avail;
+					}
+					memcpy(dest + pos, value, copy_len);
+					pos += copy_len;
+					dest[pos] = '\0';
+				}
+			}
+			continue;
 		}
 
-		/* Parse key: value line */
 		char *colon = strchr(line, ':');
-		if (!colon) continue;
+		if (!colon) {
+			continue;
+		}
 
 		*colon = '\0';
-		const char *key = line;
+		char *key = line;
 		char *value = colon + 1;
 		char normalized_key[MAX_FIELD];
 
-		trim((char *)key);
+		trim(key);
 		trim(value);
-
 		normalize_field_name(key, normalized_key, sizeof(normalized_key));
 
 		int allowed = 0;
@@ -622,93 +723,56 @@ static int parse_stanza_file(const char *filepath,
 
 		if (pkg.field_count < MAX_FIELDS) {
 			snprintf(pkg.fields[pkg.field_count].key,
-								sizeof(pkg.fields[pkg.field_count].key),
-								"%s",
-								normalized_key);
+					 sizeof(pkg.fields[pkg.field_count].key),
+					 "%s",
+					 normalized_key);
 			snprintf(pkg.fields[pkg.field_count].value,
-								sizeof(pkg.fields[pkg.field_count].value),
-								"%s",
-								value);
+					 sizeof(pkg.fields[pkg.field_count].value),
+					 "%s",
+					 value);
 			last_kept_index = pkg.field_count;
 			pkg.field_count++;
 		}
 	}
 
-	/* Flush final stanza when file does not end with a blank line. */
-	flush_package_json(&pkg,
-											feed_name,
-											out_json,
-											first_item,
-											installed_map);
-
+	flush_package_json(&pkg, feed_name, out_json, first_item, installed_map);
 	fclose(fp);
 	return 1;
 }
 
-/* Write feeds list as JSON */
-static int write_feeds_json(const char *output_file) {
-	FILE *fp = fopen(OPKG_CONFIG, "r");
-	if (!fp) {
-		fprintf(stderr, "Error: cannot read %s\n", OPKG_CONFIG);
-		return 0;
-	}
-
+static int write_feeds_json(const char *output_file, const OpkgConfig *cfg)
+{
 	FILE *out = fopen(output_file, "w");
 	if (!out) {
 		fprintf(stderr, "Error: cannot write %s\n", output_file);
-		fclose(fp);
 		return 0;
 	}
 
-	fprintf(out, "[");
-	int first = 1;
-	char line[MAX_LINE];
+	fputs("[", out);
+	for (int i = 0; i < cfg->feed_count; ++i) {
+		if (i > 0) {
+			fputs(",", out);
+		}
 
-	while (fgets(line, sizeof(line), fp)) {
-		line[strcspn(line, "\n")] = '\0';
-		trim(line);
-
-		/* Skip comments and empty lines */
-		if (!line[0] || line[0] == '#') continue;
-
-		/* Parse: src/gz <name> <url> */
-		char *type = strtok(line, " \t");
-		if (!type) continue;
-
-		char *name = strtok(NULL, " \t");
-		if (!name) continue;
-
-		char *url = strtok(NULL, " \t");
-		if (!url) continue;
-
-		if (first) first = 0;
-		else fprintf(out, ",");
-
-		fprintf(out, "{");
-		fprintf(out, "\"name\":");
-		json_escape_print(out, name);
-		fprintf(out, ",\"url\":");
-		json_escape_print(out, url);
-		fprintf(out, ",\"builtin\":%s}", feed_is_builtin(name) ? "true" : "false");
+		fputs("{\"name\":", out);
+		json_escape_print(out, cfg->feeds[i].name);
+		fputs(",\"url\":", out);
+		json_escape_print(out, cfg->feeds[i].url);
+		fprintf(out, ",\"builtin\":%s}", feed_is_builtin(cfg->feeds[i].name) ? "true" : "false");
 	}
+	fputs("]\n", out);
 
-	fprintf(out, "]\n");
-	fclose(fp);
 	fclose(out);
 	return 1;
 }
 
-/* Write packages list as JSON */
-static int write_packages_json(const char *output_file) {
-	/* Match json-helper.py fields_list = ["Package", "Description", "Version", "Size"] */
-	const char *allowed_fields[] = {
-		"package", "description", "version", "size"
-	};
-	int allowed_count = sizeof(allowed_fields) / sizeof(allowed_fields[0]);
+static int write_packages_json(const char *output_file, const OpkgConfig *cfg)
+{
+	const char *allowed_fields[] = {"package", "description", "version", "size"};
+	const int allowed_count = (int)(sizeof(allowed_fields) / sizeof(allowed_fields[0]));
 
 	InstalledMap installed = {0};
-	if (!parse_installed_status(&installed)) {
-		/* Continue with empty installed lookup if status parse fails. */
+	if (!parse_installed_status(cfg->status_file, &installed)) {
 		installed.items = NULL;
 		installed.count = 0;
 		installed.capacity = 0;
@@ -721,23 +785,21 @@ static int write_packages_json(const char *output_file) {
 		return 0;
 	}
 
-	fprintf(out, "[");
+	fputs("[", out);
 	int first_item = 1;
 
-	char feed_names[256][MAX_FIELD];
-	int feed_count = load_feed_names(feed_names, 256);
-	for (int i = 0; i < feed_count; ++i) {
-		char filepath[2048];
-		size_t base_len = strlen(OPKG_LISTS_DIR);
-		size_t name_len = strnlen(feed_names[i], MAX_FIELD);
+	for (int i = 0; i < cfg->feed_count; ++i) {
+		char filepath[PATH_MAX];
+		size_t base_len = strlen(cfg->lists_dir);
+		size_t name_len = strnlen(cfg->feeds[i].name, MAX_FIELD);
 
 		if (base_len + 1 + name_len >= sizeof(filepath)) {
 			continue;
 		}
 
-		memcpy(filepath, OPKG_LISTS_DIR, base_len);
+		memcpy(filepath, cfg->lists_dir, base_len);
 		filepath[base_len] = '/';
-		memcpy(filepath + base_len + 1, feed_names[i], name_len);
+		memcpy(filepath + base_len + 1, cfg->feeds[i].name, name_len);
 		filepath[base_len + 1 + name_len] = '\0';
 
 		struct stat file_st;
@@ -746,185 +808,150 @@ static int write_packages_json(const char *output_file) {
 		}
 
 		parse_stanza_file(filepath,
-											feed_names[i],
-											out,
-											&first_item,
-											&installed,
-											allowed_fields,
-											allowed_count);
+					 cfg->feeds[i].name,
+					 out,
+					 &first_item,
+					 &installed,
+					 allowed_fields,
+					 allowed_count);
 	}
 
-	fprintf(out, "]\n");
+	fputs("]\n", out);
 	fclose(out);
 	free_installed_map(&installed);
 	return 1;
 }
 
-/* Check if cache is still valid based on source file mtimes */
-static int file_or_link_newer_than(const char *path, time_t t)
+static int get_executable_dir(char *out, size_t out_len)
 {
-		struct stat st;
-
-		/* Check the symlink itself */
-		if (lstat(path, &st) != 0)
-			return 1;   /* missing file -> invalidate cache */
-
-		if (st.st_mtime > t)
-			return 1;
-
-		/* If it's a symlink, also check the target */
-		if (S_ISLNK(st.st_mode)) {
-			if (stat(path, &st) != 0)
-				return 1;   /* broken link -> invalidate cache */
-
-			if (st.st_mtime > t)
-				return 1;
-		}
-
+	if (!out || out_len == 0) {
 		return 0;
-}
-
-static int feed_cache_is_valid(const char *cache_file,
-													const char *src_file1,
-													const char *src_file2)
-{
-	struct stat cache_st;
-
-	if (stat(cache_file, &cache_st) != 0) {
-		return 1;
 	}
 
+	char exe_path[PATH_MAX];
+	ssize_t n = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+	if (n <= 0) {
+		return 0;
+	}
+	exe_path[n] = '\0';
 
-	time_t cache_time = cache_st.st_mtime;
-
-	if (file_or_link_newer_than(src_file1, cache_time)) {
-		return 1;
+	char *slash = strrchr(exe_path, '/');
+	if (!slash) {
+		return 0;
 	}
 
-
-	if (src_file2 &&
-		file_or_link_newer_than(src_file2, cache_time))
-		return 1;
-
-	return 0;
-}
-
-static time_t latest_package_source_mtime(void)
-{
-	time_t latest_src = 0;
-	struct stat st;
-
-	if (stat(OPKG_CONFIG, &st) == 0 && st.st_mtime > latest_src) {
-		latest_src = st.st_mtime;
-	}
-	if (stat(OPKG_STATUS, &st) == 0 && st.st_mtime > latest_src) {
-		latest_src = st.st_mtime;
-	}
-
-	char feed_names[256][MAX_FIELD];
-	int feed_count = load_feed_names(feed_names, 256);
-	for (int i = 0; i < feed_count; ++i) {
-		char filepath[2048];
-		size_t base_len = strlen(OPKG_LISTS_DIR);
-		size_t name_len = strnlen(feed_names[i], MAX_FIELD);
-
-		if (base_len + 1 + name_len >= sizeof(filepath)) {
-				continue;
-		}
-
-		memcpy(filepath, OPKG_LISTS_DIR, base_len);
-		filepath[base_len] = '/';
-		memcpy(filepath + base_len + 1, feed_names[i], name_len);
-		filepath[base_len + 1 + name_len] = '\0';
-
-		if (stat(filepath, &st) == 0 && st.st_mtime > latest_src) {
-				latest_src = st.st_mtime;
-		}
-	}
-
-	return latest_src;
-}
-
-int cacheValid(const char *feeds_cache, const char *packages_cache) {
-	int needs_update = feed_cache_is_valid(feeds_cache, OPKG_CONFIG, NULL);
-
-	if (!needs_update) {
-		time_t latest_src = latest_package_source_mtime();
-		struct stat cache_st;
-		needs_update = (stat(packages_cache, &cache_st) != 0) || (cache_st.st_mtime < latest_src);
-		if (needs_update) {
-			fprintf(stdout,"feed package out of date\n");
-		}
-	} else {
-		fprintf(stdout,"feed cache out of date 2\n");
-	}
-
-	if (!needs_update) {
-		fprintf(stdout, "cache is valid\n");
+	*slash = '\0';
+	if (snprintf(out, out_len, "%s", exe_path) >= (int)out_len) {
 		return 0;
 	}
 
 	return 1;
-
 }
 
-int updatePackages() {
-	return system("opkg update");
-
+static void print_usage(const char *program)
+{
+	fprintf(stderr, "Usage: %s %s <opkg.conf> [output_dir] [--update=all|feeds|packages]\n", program, OPKG_JSON_INDEXER_VERSION);
+	fprintf(stderr, "  <opkg.conf>    Path to the opkg configuration file\n");
+	fprintf(stderr, "  [output_dir]   Optional output directory for feeds.json and packages.json\n");
+	fprintf(stderr, "  [--update=..]  Optional update mode: all, feeds, or packages\n");
 }
 
-int main(int argc, char **argv) {
+static int parse_update_mode(const char *arg, UpdateMode *mode)
+{
+	const char *prefix = "--update=";
+	size_t prefix_len = strlen(prefix);
 
-	//args action; update, options: force
-
-	if (argc < 2) {
-			fprintf(stderr, "Usage: opkg-json-indexer update [force]\n");
-			return 1;
+	if (strncmp(arg, prefix, prefix_len) != 0) {
+		return 0;
 	}
 
-	/* Ensure cache directory exists */
-	mkdir(CACHE_DIR, 0755);
-
-	const char *feeds_cache = CACHE_DIR "/feeds.json";
-	const char *packages_cache = CACHE_DIR "/packages.json";
-
-	const char *action = argv[1];
-
-	if (strcmp(action, "update") != 0) {
-		fprintf(stderr, "Error: unsupported action: %s\n", action);
+	const char *value = arg + prefix_len;
+	if (strcmp(value, "all") == 0) {
+		*mode = UPDATE_ALL;
+		return 1;
+	}
+	if (strcmp(value, "feeds") == 0) {
+		*mode = UPDATE_FEEDS;
+		return 1;
+	}
+	if (strcmp(value, "packages") == 0) {
+		*mode = UPDATE_PACKAGES;
+		return 1;
+	}
+	if (strcmp(value, "none") == 0) {
+		*mode = UPDATE_NONE;
 		return 1;
 	}
 
-	int needs_update = 0;
+	return 0;
+}
 
-	for (int i = 2; i < argc; ++i) {
-		if (strcmp(argv[i], "force") == 0) {
-			needs_update = 1;
-			break;
-		}
+int main(int argc, char **argv) {
+	/* Input arguments:
+	 *   argv[1] = opkg config file
+	 *   argv[2] = optional output directory, unless it starts with "--"
+	 *   argv[2..] or argv[3..] = optional --update=all|feeds|packages flags
+	 */
+	if (argc < 2) {
+		print_usage(argv[0]);
+		return 1;
 	}
 
-	if (!needs_update) {
-		needs_update = cacheValid(feeds_cache, packages_cache);
-		if (!needs_update) {
-			return 0;
-		}
+	const char *config_path = argv[1];
+	const char *output_dir_arg = NULL;
+	UpdateMode update_mode = UPDATE_ALL;
+	int arg_index = 2;
+
+	if (arg_index < argc && strncmp(argv[arg_index], "--", 2) != 0) {
+		output_dir_arg = argv[arg_index];
+		arg_index++;
 	}
 
-	if (needs_update) {
-		int rc = updatePackages();
-		if (rc != 0) {
-			fprintf(stdout, "Error: opkg update conatined errors (status=%d)\n", rc);
-			//return rc; //continue may not be our feed
-		}
-
-		if (!write_feeds_json(feeds_cache)) {
-			fprintf(stderr, "Error: failed to write feeds cache\n");
+	for (int i = arg_index; i < argc; ++i) {
+		if (!parse_update_mode(argv[i], &update_mode)) {
+			print_usage(argv[0]);
 			return 1;
 		}
+	}
 
-		if (!write_packages_json(packages_cache)) {
-			fprintf(stderr, "Error: failed to write packages cache\n");
+	OpkgConfig config;
+	if (!parse_opkg_config(config_path, &config)) {
+		return 1;
+	}
+
+	if (update_mode == UPDATE_NONE) {
+		return 0;
+	}
+
+	char output_dir[PATH_MAX];
+	if (output_dir_arg) {
+		if (snprintf(output_dir, sizeof(output_dir), "%s", output_dir_arg) >= (int)sizeof(output_dir)) {
+			fprintf(stderr, "Error: output directory path too long\n");
+			return 1;
+		}
+	} else {
+		if (!get_executable_dir(output_dir, sizeof(output_dir))) {
+			fprintf(stderr, "Error: failed to resolve executable directory\n");
+			return 1;
+		}
+	}
+
+	char feeds_output[PATH_MAX];
+	char packages_output[PATH_MAX];
+	if (snprintf(feeds_output, sizeof(feeds_output), "%s/feeds.json", output_dir) >= (int)sizeof(feeds_output) ||
+		snprintf(packages_output, sizeof(packages_output), "%s/packages.json", output_dir) >= (int)sizeof(packages_output)) {
+		fprintf(stderr, "Error: output path too long\n");
+		return 1;
+	}
+
+	if (update_mode == UPDATE_ALL || update_mode == UPDATE_FEEDS) {
+		if (!write_feeds_json(feeds_output, &config)) {
+			return 1;
+		}
+	}
+
+	if (update_mode == UPDATE_ALL || update_mode == UPDATE_PACKAGES) {
+		if (!write_packages_json(packages_output, &config)) {
 			return 1;
 		}
 	}

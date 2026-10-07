@@ -1,14 +1,14 @@
 import QtQuick
 import Victron.VenusOS
-import "qrc:/OpkgManager/components/OpkgSingleton.js" as OpkgSingleton
+import "qrc:/Vespera/components/VesperaSingleton.js" as VesperaSingleton
 
 DeviceListDelegate {
 	id: root
 
 	onDeviceChanged: {
-		var isReload = OpkgSingleton.getIsReload()
+		var isReload = VesperaSingleton.getIsReload()
 
-		console.debug("OpkgManager: DeviceListDelegate::onDeviceChanged: isRelead=", isReload)
+		console.debug("Vespera: DeviceListDelegate::onDeviceChanged: isRelead=", isReload)
 
 		// Using callLater fixes intermitten lock ups
 		Qt.callLater(function () {
@@ -20,14 +20,14 @@ DeviceListDelegate {
 			Global.mainView.navBar.setCurrentIndex(-1)
 		}
 
-		if (!OpkgSingleton.OpkgCustomPageModelExists()) {
-			OpkgSingleton.createOpkgCustomPageModel(Global.main)
+		if (!VesperaSingleton.customPageModelExists()) {
+			VesperaSingleton.createCustomPageModel(Global.main)
 		} else {
-			console.debug("OpkgManager: OpkgSingleton exists")
+			console.debug("Vespera: Singleton exists")
 		}
 
 		if (isReload) {
-			OpkgSingleton.setIsReload(false)
+			VesperaSingleton.setIsReload(false)
 
 			Global.pageManager.popAllPages(1)
 
@@ -41,7 +41,7 @@ DeviceListDelegate {
 
 	}
 	// Component.onDestruction: {
-	// 	console.debug("OpkgManager device delegate:DESTROYED")
+	// 	console.debug("Vespera device delegate:DESTROYED")
 	// }
 
 }

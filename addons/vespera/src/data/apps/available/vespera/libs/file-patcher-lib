@@ -1,0 +1,540 @@
+#!/usr/bin/env bash
+
+set -o nounset
+declare __this_path; __this_path="$(dirname "${BASH_SOURCE[0]}")"
+__this_path="$(cd "${__this_path}/.." && pwd)"
+
+# shellcheck source=/data/dev/addons/vespera/src/data/apps/available/vespera/libs/source-lib
+source "${VESPERA_ROOT:-}$__this_path/libs/source-lib"
+addsource libs/version-lib
+
+declare -i PATCH_LENGTH=0
+declare -a PATCH_LINES=()
+declare -a FILE_LINES=()
+declare -a FILE_PATCH_JOB_FILES=()
+declare -a FILE_PATCH_JOB_RANGES=()
+
+__file_patcher_strip_comments_and_whitespace() {
+	local line="${1:-}"
+	line="${line%%#*}"
+	line="${line#"${line%%[![:space:]]*}"}"
+	line="${line%"${line##*[![:space:]]}"}"
+	printf '%s' "$line"
+}
+
+# reads the patch file into the PATCH_LINES array.
+# $1: the filename of the file to read
+# PATCH_LENGTH is set to the number size of the array
+_read_patch_lines() {
+	local filename="${1}"
+	[[ -f  "$filename" ]] || { echo "file-patcher: patcher-file not found: ${filename}"; return 1; }
+	local raw_line
+	PATCH_LINES=()
+	while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+		raw_line="$(__file_patcher_strip_comments_and_whitespace "$raw_line")"
+		[[ -z "$raw_line" ]] && continue
+		PATCH_LINES+=("$raw_line")
+	done < "$filename"
+	PATCH_LENGTH=${#PATCH_LINES[@]}
+}
+
+# Writes the FILE_LINES array to file
+# $1: the file name to write the FILE_LINES array too
+_write_file_lines() {
+	local filename="${1}"
+	printf "%s\n" "${FILE_LINES[@]}" > "${filename}"
+}
+
+# shellcheck disable=SC2329
+# inserts a new line in the FILE_LINES array
+# $1: the index in the FILE_LINES array to insert the new line at
+# $2: the string to insert
+_insert_line() {
+	local -i insert_at_index=${1}
+	local line_to_insert="${2}"
+
+	FILE_LINES=("${FILE_LINES[@]:0:$insert_at_index}" "${line_to_insert}" "${FILE_LINES[@]:$insert_at_index}")
+}
+
+# inserts a slice of PATCH_LINES (from start index ($2) to end index ($3)) into the FILE_LINES at index ($1)
+# $1 insert index
+# $2 patch start index
+# $3 patch end index
+# requires _read_file_lines & _read_patch_lines methods have been called
+_insert_patch() {
+	local -i insert_at_index=${1}
+	local -i patch_start_index=${2}
+	local -i patch_len=$(( ${3} - ${2} + 1 ))
+
+	FILE_LINES=("${FILE_LINES[@]:0:$insert_at_index}" "${PATCH_LINES[@]:patch_start_index:patch_len}" "${FILE_LINES[@]:$insert_at_index}")
+}
+
+# removes a range of lines from FILE_LINES using a start index and an end index
+# $1: the start index
+# $2: the end index
+# requires _read_file_lines & _read_patch_lines methods have been called
+# shellcheck disable=SC2329
+_remove_range() {
+	local -i remove_start_index=${1}
+	local -i remove_end_index=${2}
+	local -i remove_end_index=$((remove_end_index+1))
+	FILE_LINES=("${FILE_LINES[@]:0:$remove_start_index}" "${FILE_LINES[@]:remove_end_index}")
+}
+
+# finds the end of a patch segment usualy definded by '===='
+# Arguments
+# $1 : [in] the start position of the patch segment
+# $2 : [in,out] patch_end
+_getCommandBounds() {
+
+	local patchcurpos=${1}
+	local -n __patch_start=${2}
+	local -n __patch_end=${3}
+	local -i p=0
+	__patch_end=$((PATCH_LENGTH-1))
+
+	if [[ ${PATCH_LINES[$patchcurpos]:0:1} == "@" ]]; then
+		__patch_start=$((patchcurpos+2))
+	else
+		__patch_start=$patchcurpos
+	fi
+
+	for (( p=__patch_start; p<PATCH_LENGTH; p++ )); do
+		if [[ "${PATCH_LINES[$p]}" == "====" ]]; then
+			__patch_end=$((p-1))
+			break
+		fi
+	done
+}
+
+_advance_to_next_command() {
+	local -n __index=${1}
+	local -i patch_start=0 patch_end=0
+
+	_getCommandBounds "$__index" patch_start patch_end
+	__index=$((patch_end+2))
+}
+
+# finds the text in the FILE_LINES array using the text segment from the PATCH_LINES array
+# Arguments:
+# $1 : [in] direction (1=forwards,-1=backwards)
+# $2 : [in] patch_start
+# $3 : [in] patch_end
+# $4 : [in,out] file_start
+# $5 : [in,out] file_end
+_find() {
+	local  -i direction=${1}
+	local  -i patch_start=${2}
+	local  -i patch_end=${3}
+	local -n __file_start=${4}
+	local -n __file_end=${5}
+	local -i comment_count=0 f=0 p=0
+	local -i step=1
+	local -i file_exit_index=${#FILE_LINES[@]}
+	local -i patch_exit_index=$((patch_end+1))
+	local -i patch_start_index=$patch_start
+	local -i patch_done_index=$patch_end
+
+	__file_start=-1; __file_end=-1;
+
+	if ((direction==-1)); then
+		f=$((file_exit_index-1))
+		patch_done_index=$patch_start
+		step=-1; file_exit_index=-1; patch_exit_index=-1
+		patch_start_index=$patch_end
+	fi
+
+	while ((f!=file_exit_index)); do
+
+		p=$patch_start_index
+		# trim white space when ,matching opening/closing comments \* */
+		if [[ "${FILE_LINES[$f]}" =~ ^[[:space:]]*/\* ]]; then
+			comment_count=$((comment_count+step))
+		elif [[ "${FILE_LINES[$f]}" =~ ^[[:space:]]*\*/ ]]; then
+			comment_count=$((comment_count-step))
+		fi
+		((comment_count)) && { f=$((f+step)); continue; } # don't search in block comments
+
+		while ((p!=patch_exit_index)); do
+
+			if [[ "${FILE_LINES[$f]}" = "${PATCH_LINES[$p]}" ]] ; then
+
+				if ((p==patch_start_index)); then
+					__file_start=$f
+				fi
+
+				if ((p==patch_done_index)); then
+					if ((direction==-1)); then
+						__file_end=$__file_start
+						__file_start=$f
+					else
+						__file_end=$f
+					fi
+					break 2
+				fi
+				f=$((f+step))
+			else
+				__file_start=-1
+				break
+			fi
+			p=$((p+step))
+		done
+
+		f=$((f+step))
+	done
+
+	# echo "__file_start:$__file_start,__file_end:$__file_end,patch_start:$patch_start,patch_end:$patch_end"
+}
+
+
+_openfile_command() {
+	local -n __filename=$1
+	local -n __index=$2
+	local -n __fileopen=$3
+
+	if ((__fileopen)); then
+		_write_file_lines "$__filename"
+		FILE_LINES=()
+		__fileopen=0
+	fi
+
+	__index=$((__index+2))
+	__filename="${PATCH_LINES[$__index]}"
+
+	if [[ ! -f "$__filename" ]]; then
+		echo "WARNING: File not found: $__filename" >&2
+		__filename=""
+		__index=$((__index+2))
+		return
+	fi
+
+	# Read file into array FILE_LINES
+	mapfile -t FILE_LINES < "$__filename"
+	__fileopen=1
+	__index=$((__index+2))
+}
+
+__file_patcher_queue_file_job() {
+	local filename="${1}"
+	local range_start="${2}"
+	local range_end="${3}"
+	local -i i=0
+
+	for i in "${!FILE_PATCH_JOB_FILES[@]}"; do
+		if [[ "${FILE_PATCH_JOB_FILES[$i]}" == "$filename" ]]; then
+			if [[ -n "${FILE_PATCH_JOB_RANGES[$i]:-}" ]]; then
+				FILE_PATCH_JOB_RANGES[$i]+=$'\n'
+			fi
+			FILE_PATCH_JOB_RANGES[$i]+="${range_start}:${range_end}"
+			return 0
+		fi
+	done
+
+	FILE_PATCH_JOB_FILES+=("$filename")
+	FILE_PATCH_JOB_RANGES+=("${range_start}:${range_end}")
+}
+
+__file_patcher_run_jobs() {
+	local mode="${1}"
+	local -a job_pids=()
+	local -i job_index=0
+	local filename ranges
+
+	for job_index in "${!FILE_PATCH_JOB_FILES[@]}"; do
+		filename="${FILE_PATCH_JOB_FILES[$job_index]}"
+		ranges="${FILE_PATCH_JOB_RANGES[$job_index]}"
+		if [[ "$mode" == "apply" ]]; then
+			__file_patcher_apply_file_job "$filename" "$ranges" &
+		else
+			__file_patcher_revert_file_job "$filename" "$ranges" &
+		fi
+		job_pids+=("$!")
+	done
+
+	for job_index in "${!job_pids[@]}"; do
+		wait "${job_pids[$job_index]}" || return 1
+	done
+}
+
+__file_patcher_apply_file_job() {
+	local filename="${1}"
+	local ranges="${2}"
+	local range
+	local -i file_start=0 file_end=0
+	local -i range_start=0 range_end=0
+	local -i command_start=0 command_end=0
+	local -i p=0
+	local -i direction=1
+	local -i file_dirty=0
+	local patch_line="" command="" version_condition=""
+	local venus_version=""
+
+	[[ -n "$filename" ]] || return 0
+	[[ -f "$filename" ]] || { echo "WARNING: File not found: $filename" >&2; return 0; }
+
+	mapfile -t FILE_LINES < "$filename"
+	version_lib_get_venus_verion_byref venus_version
+
+	while IFS= read -r range; do
+		[[ -n "$range" ]] || continue
+		range_start="${range%%:*}"
+		range_end="${range#*:}"
+
+		p=$range_start
+		while ((p <= range_end)); do
+			patch_line="${PATCH_LINES[$p]}"
+			command="${patch_line%% *}"
+			version_condition=""
+
+			if [[ "$patch_line" != "$command" ]]; then
+					version_condition="${patch_line#* }"
+					if ! version_lib_check "$version_condition" "$venus_version"; then
+							_advance_to_next_command p
+							continue
+					fi
+			fi
+			case "$command" in
+			@find | @findbackwards)
+				direction=1; [[ $command == "@findbackwards" ]] && direction=-1
+				_getCommandBounds "$p" command_start command_end
+				_find "$direction" "$command_start" "$command_end" file_start file_end
+				p=$((command_end+1))
+				;;
+			@insertbefore | @insertafter)
+				[[ $file_start -eq -1 ]] && { p=$((p+1)); continue; }
+
+				_getCommandBounds "$p" command_start command_end
+				# shellcheck disable=SC2034
+				local -i fstart=$file_start fend=-1
+				_find "$direction" "$command_start" "$command_end" fstart fend
+
+				[[ $fstart -ne -1 ]] && { p=$((command_end+1)); ((p+=1)); continue; }
+
+				local -i insert_at_file_pos=$((file_start))
+				[[ "$command" == @insertafter ]] && insert_at_file_pos=$((file_end+1))
+
+				_insert_patch "$insert_at_file_pos" "$command_start" "$command_end"
+				file_dirty=1
+				p=$((command_end+1))
+				file_start=-1; file_end=-1
+				;;
+			@remove)
+				_getCommandBounds "$p" command_start command_end
+				_find "$direction" "$command_start" "$command_end" file_start file_end
+				p=$((command_end+1))
+
+				[[ $file_start -eq -1 ]] && { ((p+=1)); continue; }
+
+				file_end=$((file_end+1))
+				_insert_line "$file_end" "*/"
+				_insert_line "$file_start" "/*"
+				file_dirty=1
+				;;
+			@append)
+				_getCommandBounds "$p" command_start command_end
+				_insert_patch "${#FILE_LINES[@]}" "$command_start" "$command_end"
+				file_dirty=1
+				p=$((command_end+1))
+				file_start=-1; file_end=-1
+				;;
+			esac
+
+			((p+=1))
+		done
+	done <<< "$ranges"
+	((file_dirty)) && _write_file_lines "$filename"
+}
+
+__file_patcher_revert_file_job() {
+	local filename="${1}"
+	local ranges="${2}"
+	local range
+	local -i file_start=0 file_end=0
+	local -i range_start=0 range_end=0
+	local -i command_start=0 command_end=0
+	local -i p=0
+	local -i file_dirty=0
+	local patch_line="" command="" version_condition=""
+	local venus_version=""
+
+	[[ -n "$filename" ]] || return 0
+	[[ -f "$filename" ]] || { echo "WARNING: File not found: $filename" >&2; return 0; }
+
+	mapfile -t FILE_LINES < "$filename"
+	version_lib_get_venus_verion_byref venus_version
+
+	while IFS= read -r range; do
+		[[ -n "$range" ]] || continue
+		range_start="${range%%:*}"
+		range_end="${range#*:}"
+
+		p=$range_start
+		while ((p <= range_end)); do
+			patch_line="${PATCH_LINES[$p]}"
+			command="${patch_line%% *}"
+			version_condition=""
+
+			if [[ "$patch_line" != "$command" ]]; then
+				version_condition="${patch_line#* }"
+				if ! version_lib_check "$version_condition" "$venus_version"; then
+					_advance_to_next_command p
+					continue
+				fi
+			fi
+
+			case "$command" in
+			@remove)
+				_getCommandBounds "$p" command_start command_end
+				_find 1 "$command_start" "$command_end" file_start file_end
+				if ((file_start!=-1)) && [[ "${FILE_LINES[$file_start]}" == "/*" ]] ; then
+					_remove_range "$file_end" "$file_end"
+					_remove_range "$file_start" "$file_start"
+					file_dirty=1
+				fi
+
+				file_start=-1; file_end=-1; command_start=-1; command_end=-1
+				;;
+			@insertbefore | @insertafter | @append)
+				_getCommandBounds "$p" command_start command_end
+				_find 1 "$command_start" "$command_end" file_start file_end
+
+				if ((file_start!=-1)); then
+					_remove_range "$file_start" "$file_end"
+					file_dirty=1
+				fi
+
+				file_start=-1; file_end=-1; command_start=-1; command_end=-1
+				;;
+			esac
+			((p+=1))
+		done
+	done <<< "$ranges"
+
+	((file_dirty)) && _write_file_lines "$filename"
+}
+
+# shellcheck disable=SC2329
+# reads the commands in a <name>.patch file and applys the result to the supplied file
+# $1: the file containing the patch commands to apply.
+file_patcher_apply_patch() {
+	local patchfile="$1"
+	local -i p=0
+	local -i block_start=-1
+	local -i file_job_start=-1
+	local -i file_job_end=-1
+	local current_file=""
+
+	_read_patch_lines "$patchfile" || return 1
+
+	local venus_version="" patch_line="" command="" version_condition=""
+
+	version_lib_get_venus_verion_byref venus_version
+
+	while ((p < PATCH_LENGTH)); do
+
+		#echo "index: $p, ${#PATCH_LINES[@]}, value: ${PATCH_LINES[$p]}"
+		patch_line="${PATCH_LINES[$p]}"
+
+		# Extract command (first word) and version condition
+		command="${patch_line%% *}"
+		version_condition=""
+
+		# Check if there's a version condition
+		if [[ "$patch_line" != "$command" ]]; then
+			version_condition="${patch_line#* }"
+			if ! version_lib_check "$version_condition" "$venus_version"; then
+				_advance_to_next_command p
+				continue
+			fi
+		fi
+
+		if [[ "$command" == "@openfile" ]]; then
+			if [[ -n "$current_file" && $file_job_start -ge 0 ]]; then
+				file_job_end=$((p-1))
+				__file_patcher_queue_file_job "$current_file" "$file_job_start" "$file_job_end"
+			fi
+
+			_getCommandBounds "$p" file_job_start file_job_end
+			current_file="${PATCH_LINES[$file_job_start]}"
+			block_start=$((file_job_end+2))
+			file_job_start=$block_start
+			p=$block_start
+			continue
+		fi
+
+		((p+=1))
+	done
+
+	if [[ -n "$current_file" && $file_job_start -ge 0 ]]; then
+		__file_patcher_queue_file_job "$current_file" "$file_job_start" "$((PATCH_LENGTH-1))"
+	fi
+
+	__file_patcher_run_jobs apply
+}
+
+# shellcheck disable=SC2329
+# reverts the changes that were applied using the apply_patch method
+# $1: the file containing the patch commands to revert.
+file_patcher_revert_patch() {
+	local patchfile="$1"
+	local -i p=0
+	local -i block_start=-1
+	local -i file_job_start=-1
+	local -i file_job_end=-1
+	local current_file=""
+
+	_read_patch_lines "$patchfile" || return 1
+
+	local venus_version="" patch_line="" command="" version_condition=""
+
+	version_lib_get_venus_verion_byref venus_version
+
+	while ((p < PATCH_LENGTH)); do
+
+		#echo "index: $p, ${#PATCH_LINES[@]}, value: ${PATCH_LINES[$p]}"
+		patch_line="${PATCH_LINES[$p]}"
+
+		# Extract command (first word) and version condition
+		command="${patch_line%% *}"
+		version_condition=""
+
+		# Check if there's a version condition
+		if [[ "$patch_line" != "$command" ]]; then
+			version_condition="${patch_line#* }"
+			if ! version_lib_check "$version_condition" "$venus_version"; then
+				_advance_to_next_command p
+				continue
+			fi
+		fi
+
+		if [[ "$command" == "@openfile" ]]; then
+			if [[ -n "$current_file" && $file_job_start -ge 0 ]]; then
+				file_job_end=$((p-1))
+				__file_patcher_queue_file_job "$current_file" "$file_job_start" "$file_job_end"
+			fi
+
+			_getCommandBounds "$p" file_job_start file_job_end
+			current_file="${PATCH_LINES[$file_job_start]}"
+			block_start=$((file_job_end+2))
+			file_job_start=$block_start
+			p=$block_start
+			continue
+		fi
+
+		((p+=1))
+	done
+
+	if [[ -n "$current_file" && $file_job_start -ge 0 ]]; then
+		__file_patcher_queue_file_job "$current_file" "$file_job_start" "$((PATCH_LENGTH-1))"
+	fi
+
+	__file_patcher_run_jobs revert
+}
+
+if [[ "${1:-}" = "apply" ]]; then
+	file_patcher_apply_patch "$2" "${3:-}"
+elif [[ "${1:-}" = "revert" ]]; then
+	file_patcher_revert_patch "$2" "${3:-}"
+elif [[ -n "${1:-}" ]]; then
+	echo "file-patcher: Usage: $0 apply|revert <patch_file> <optional file_to_patch>"
+fi

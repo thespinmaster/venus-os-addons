@@ -4,10 +4,10 @@
 
 ```mermaid
 flowchart LR
-    POSTINST[CONTROL postinst] --> REG[opkg_common_register_package]
-    POSTINST --> BOOTMOUNT[data mount-shares mount-common mount-all]
+    POSTINST[CONTROL postinst] --> REG[opkg_lib_register_package]
+    POSTINST --> BOOTMOUNT[data mount-shares mount-lib mount-all]
 
-    RCLOCAL[data mount-shares 2-rc-startup] --> COMMON[mount-common]
+    RCLOCAL[data mount-shares 2-rc-startup] --> COMMON[mount-lib]
     COMMON --> CONF[data conf mount-shares.conf]
     COMMON --> MOUNT[mount command]
     COMMON --> WAIT[mountpoint check loop]
@@ -21,7 +21,7 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     participant Boot as rc.local script
-    participant Common as mount-common
+    participant Common as mount-lib
     participant Conf as mount-shares.conf
     participant Kernel as mount command
 
@@ -35,7 +35,7 @@ sequenceDiagram
 
 ## Source anchors
 
-- [src/data/mount-shares/2-rc-startup](../src/data/mount-shares/2-rc-startup)
-- [src/data/mount-shares/mount-common](../src/data/mount-shares/mount-common)
+- [src/data/apps/mount-shares/2-rc-startup](../src/data/apps/mount-shares/2-rc-startup)
+- [src/data/apps/mount-shares/mount-lib](../src/data/apps/mount-shares/mount-lib)
 - [src/CONTROL/postinst](../src/CONTROL/postinst)
 - [src/CONTROL/postrm](../src/CONTROL/postrm)

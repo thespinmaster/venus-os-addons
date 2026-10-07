@@ -1,6 +1,6 @@
-Package: opkg-manager
+Package: vespera
 Version: 1.1.0
-Description: A manager for installing opkg packages on the Venus OS
+Description: An addon for installing opkg packages on the Venus OS
 Section: utilities
 Priority: optional
 Maintainer: thespinmaster@github.com

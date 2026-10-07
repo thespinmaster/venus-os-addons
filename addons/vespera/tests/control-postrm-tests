@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_control="/data/dev/addons/vespera/src/CONTROL/postrm"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+
+TEST_ROOT=
+SCRIPT_PATH=
+
+stage_postrm_runtime() {
+  TEST_ROOT="$(vt_make_test_root)"
+  SCRIPT_PATH="$TEST_ROOT/demo.postrm"
+
+  mkdir -p "$TEST_ROOT/var/lock" "$TEST_ROOT/work" "$TEST_ROOT/data/var/vespera/info"
+
+  cp "$source_control" "$SCRIPT_PATH"
+  chmod +x "$SCRIPT_PATH"
+
+  cat > "$TEST_ROOT/data/var/vespera/info/vespera.overlay-lib" <<'EOF'
+#!/usr/bin/env bash
+printf 'overlay:%s\n' "$*" >> "$TEST_LOG"
+EOF
+  chmod +x "$TEST_ROOT/data/var/vespera/info/vespera.overlay-lib"
+  : > "$TEST_ROOT/postrm.log"
+
+  ln -s "$TEST_ROOT/work" "$TEST_ROOT/var/lock/vespera"
+  printf '2\n' > "$TEST_ROOT/work/verbosity"
+}
+
+cleanup_postrm_runtime() {
+  [[ -n "${TEST_ROOT:-}" ]] && vt_safe_rm_rf "$TEST_ROOT"
+}
+
+test_control_postrm_unregisters_overlay_on_remove() {
+  stage_postrm_runtime
+
+  TEST_LOG="$TEST_ROOT/postrm.log" VESPERA_ROOT="$TEST_ROOT" \
+    bash "$SCRIPT_PATH" remove >/dev/null 2>&1
+
+  assert_exitcode 0
+  assert_file_contains "$TEST_ROOT/postrm.log" 'overlay:overlay-unregister demo'
+
+  cleanup_postrm_runtime
+}
+
+test_control_postrm_skips_unregister_on_upgrade() {
+  stage_postrm_runtime
+
+  TEST_LOG="$TEST_ROOT/postrm.log" VESPERA_ROOT="$TEST_ROOT" \
+    bash "$SCRIPT_PATH" upgrade >/dev/null 2>&1
+
+  assert_exitcode 0
+  assert_file_not_contain "$TEST_ROOT/postrm.log" 'overlay:overlay-unregister demo'
+
+  cleanup_postrm_runtime
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_control_postrm_unregisters_overlay_on_remove
+  test_control_postrm_skips_unregister_on_upgrade
+fi

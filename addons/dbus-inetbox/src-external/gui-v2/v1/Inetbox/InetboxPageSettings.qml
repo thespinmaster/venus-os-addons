@@ -5,7 +5,7 @@ Page {
 	id: page
 	title: qsTr("Open Package Manager")
 
-	Component.onDestruction: opkgManager?.cleanup()
+	Component.onDestruction: vespera?.cleanup()
 	Component.onCompleted: {
 		console.log("HELLO WORLD:InetboxPageSettings")
 	}
@@ -33,7 +33,7 @@ Page {
 	function findPageIndex(url) {
 		var navPages = Global.pageManager.navBar.pages
 		for (var i = 0; i < navPages.count; i++) {
-			if (page[i].uri == url)
+			if (navPages[i].uri == url)
 				return i
 		}
 		return -1
@@ -46,9 +46,7 @@ Page {
 			Global.pageManager.navBar.pages.push(page)
 
 		}
-			Global.pageManager.navBar.pages.pop(idx)
-
-		//else if (!add)
+		Global.pageManager.navBar.pages.pop(idx)
 
 	}
 

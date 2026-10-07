@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+usage() {
+	cat <<EOF
+Usage: $(basename "$0") <path> [--include-comments yes|no]
+
+Counts lines in shell scripts under the given path.
+Script detection:
+  - Extensions: .sh .bash .bats .zsh .ksh .ash .dash
+  - Or shell shebang in extensionless files
+
+Options:
+  --include-comments yes|no   Include full-line comments in count (default: no)
+  -h, --help                  Show this help
+EOF
+}
+
+target_path="${1:-}"
+include_comments="no"
+
+if [[ -z "${target_path}" ]]; then
+	usage
+	exit 1
+fi
+shift || true
+
+while [[ $# -gt 0 ]]; do
+	case "${1}" in
+		--include-comments)
+			include_comments="${2:-}"
+			shift 2
+			;;
+		-h|--help)
+			usage
+			exit 0
+			;;
+		*)
+			echo "ERROR: unknown argument: ${1}" >&2
+			usage >&2
+			exit 1
+			;;
+	esac
+done
+
+[[ "${include_comments}" == "yes" || "${include_comments}" == "no" ]] || {
+	echo "ERROR: --include-comments must be 'yes' or 'no'" >&2
+	exit 1
+}
+
+[[ -d "${target_path}" ]] || {
+	echo "ERROR: path not found or not a directory: ${target_path}" >&2
+	exit 1
+}
+
+tmp_files="$(mktemp)"
+trap 'rm -f "${tmp_files}"' EXIT
+
+find "${target_path}" -type f -print0 |
+while IFS= read -r -d '' f; do
+	case "${f}" in
+		*.sh|*.bash|*.bats|*.zsh|*.ksh|*.ash|*.dash)
+			echo "${f}"
+			continue
+			;;
+		*.bak|*.new|*.old|*.tmp)
+			continue;;
+	esac
+
+	first_line=""
+	IFS= read -r first_line < "${f}" || true
+	if [[ "${first_line}" == '#!'* ]] && [[ "${first_line}" == *sh* ]]; then
+		echo "${f}"
+	fi
+done | sort -u > "${tmp_files}"
+
+file_count="$(wc -l < "${tmp_files}")"
+total_lines=0
+count_lines=()
+
+while IFS= read -r f; do
+	if [[ "${include_comments}" == "yes" ]]; then
+		# Exclude empty lines, keep comments.
+		fc="$(awk '!/^[[:space:]]*$/ { c++ } END { print c+0 }' "${f}")"
+	else
+		# Exclude full-line comments and empty lines.
+		fc="$(awk '!/^[[:space:]]*#/ && !/^[[:space:]]*$/ { c++ } END { print c+0 }' "${f}")"
+	fi
+	total_lines=$((total_lines + fc))
+	count_lines+=("$fc :"$'\t'": $f")
+done < "${tmp_files}"
+
+printf '%s\n' "${count_lines[@]}" | sort -n
+
+echo "path: ${target_path}"
+echo "script files: ${file_count}"
+echo "include comments: ${include_comments}"
+echo "total lines: ${total_lines}"

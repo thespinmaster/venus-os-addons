@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_root="$this_path/../src/data/apps/available/vespera"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+
+TEST_ROOT=
+TEST_APP_ROOT=
+TEST_DATA_DIR=
+
+stage_rcs_runtime() {
+  TEST_ROOT="$(vt_make_test_root)"
+  TEST_APP_ROOT="$TEST_ROOT/data/apps/available/vespera"
+  TEST_DATA_DIR="$TEST_ROOT/data/var/vespera"
+
+  mkdir -p "$TEST_APP_ROOT/scripts" "$TEST_APP_ROOT/conf" "$TEST_APP_ROOT/libs" "$TEST_DATA_DIR/info" "$TEST_ROOT/opt/victronenergy" "$TEST_ROOT/var/log/vespera"
+  mkdir -p "$TEST_ROOT/data/apps/enabled" "$TEST_ROOT/service"
+
+  cp "$source_root/conf-default/vespera.conf" "$TEST_APP_ROOT/conf/vespera.conf"
+  cp "$source_root/scripts/rcS-local" "$TEST_APP_ROOT/scripts/rcS-local"
+  chmod +x "$TEST_APP_ROOT/scripts/rcS-local"
+
+  cat > "$TEST_APP_ROOT/conf/vespera.conf" <<EOF
+#!/usr/bin/env bash
+VESPERA_DATA_DIR="/data/var/vespera"
+VESPERA_VENUS_VERSION_FILE="/data/var/vespera/venus-version"
+VESPERA_WHITEOUTS_FILE="installer-whiteouts"
+VESPERA_DBUS_NAME="dbus-name"
+EOF
+
+  cat > "$TEST_APP_ROOT/libs/opkg-lib" <<'EOF'
+#!/usr/bin/env bash
+opkg_lib_list_packages() {
+  printf '%s\n' 'demo'
+}
+EOF
+
+  cat > "$TEST_APP_ROOT/libs/vespera-lib" <<'EOF'
+#!/usr/bin/env bash
+VESPERA_WORKING_DIR="${VESPERA_DATA_DIR}"
+VESPERA_VENUS_FIRMWARE_CHANGED_FILE="firmware-changed"
+
+opkg_lib_expand_root_fs() {
+  printf '%s\n' 'expand-root-fs' >> "$TEST_LOG"
+}
+
+opkg_lib_get_configure_order() {
+  printf '%s\n' 'demo'
+}
+
+opkg_ensure_combined_conf_file() {
+  printf '%s\n' 'ensure-combined-conf' >> "$TEST_LOG"
+}
+
+opkg_lib_configure_packages() {
+  printf 'configure:%s\n' "$*" >> "$TEST_LOG"
+}
+
+__vespera_lib_initialize() {
+  printf '%s\n' 'vespera-lib-init' >> "$TEST_LOG"
+}
+
+__vespera_lib_cleanup() {
+  printf '%s\n' 'vespera-lib-cleanup' >> "$TEST_LOG"
+}
+EOF
+  chmod +x "$TEST_APP_ROOT/libs/vespera-lib"
+
+  cat > "$TEST_DATA_DIR/info/vespera.overlay-lib" <<'EOF'
+#!/usr/bin/env bash
+printf 'overlay:%s\n' "$*" >> "$TEST_LOG"
+EOF
+  chmod +x "$TEST_DATA_DIR/info/vespera.overlay-lib"
+
+  cat > "$TEST_APP_ROOT/scripts/start-app-services" <<'EOF'
+#!/usr/bin/env bash
+printf 'start-services:%s\n' "$*" >> "$TEST_LOG"
+EOF
+  chmod +x "$TEST_APP_ROOT/scripts/start-app-services"
+
+  cat > "$TEST_APP_ROOT/scripts/execute-startup-scripts" <<'EOF'
+#!/usr/bin/env bash
+printf 'execute-startup:%s\n' "$*" >> "$TEST_LOG"
+EOF
+  chmod +x "$TEST_APP_ROOT/scripts/execute-startup-scripts"
+
+  cat > "$TEST_ROOT/opt/victronenergy/version" <<'EOF'
+v3.01
+EOF
+
+  cat > "$TEST_DATA_DIR/info/demo.dbus-name" <<'EOF'
+com.example.demo
+EOF
+
+  ln -s "$TEST_ROOT/data/apps/available/demo" "$TEST_ROOT/data/apps/enabled/demo"
+
+  : > "$TEST_ROOT/rcs.log"
+}
+
+cleanup_rcs_runtime() {
+  [[ -n "${TEST_ROOT:-}" ]] && vt_safe_rm_rf "$TEST_ROOT"
+}
+
+test_rcs_local_copies_version_when_missing_and_exits() {
+  stage_rcs_runtime
+
+  TEST_LOG="$TEST_ROOT/rcs.log" VESPERA_ROOT="$TEST_ROOT" bash "$TEST_APP_ROOT/scripts/rcS-local"
+
+  assert_exitcode 0 "rcS-local exits when creating initial version file"
+  assert_file_contains "$TEST_DATA_DIR/venus-version" 'v3.01' "rcS-local copies current Venus version on first boot"
+
+  cleanup_rcs_runtime
+}
+
+test_rcs_local_mounts_overlays_and_starts_services_when_versions_match() {
+  stage_rcs_runtime
+
+  cp "$TEST_ROOT/opt/victronenergy/version" "$TEST_DATA_DIR/venus-version"
+
+  TEST_LOG="$TEST_ROOT/rcs.log" VESPERA_ROOT="$TEST_ROOT" bash "$TEST_APP_ROOT/scripts/rcS-local"
+
+  assert_exitcode 0 "rcS-local exits successfully when firmware versions match"
+  assert_file_contains "$TEST_ROOT/rcs.log" 'overlay:overlay-mount' "matching firmware mounts overlays"
+  assert_file_contains "$TEST_ROOT/rcs.log" 'start-services:demo com.example.demo' "matching firmware starts enabled app services"
+  assert_file_contains "$TEST_ROOT/rcs.log" 'execute-startup:rcS.local' "matching firmware runs rcS.local startup hooks"
+
+  cleanup_rcs_runtime
+}
+
+test_rcs_local_firmware_changed_reconciles_and_reconfigures() {
+  stage_rcs_runtime
+
+  printf '%s\n' 'v3.00' > "$TEST_DATA_DIR/venus-version"
+  printf '%s\n' 'v3.01' > "$TEST_ROOT/opt/victronenergy/version"
+
+  TEST_LOG="$TEST_ROOT/rcs.log" VESPERA_ROOT="$TEST_ROOT" bash "$TEST_APP_ROOT/scripts/rcS-local"
+
+  assert_exitcode 0 "rcS-local firmware-changed path exits successfully"
+  assert_file_contains "$TEST_DATA_DIR/venus-version.old" 'v3.00' "firmware-changed stores previous firmware version"
+  assert_file_contains "$TEST_DATA_DIR/venus-version" 'v3.01' "firmware-changed writes current firmware version"
+  assert_file_contains "$TEST_ROOT/rcs.log" 'overlay:overlay-reconcile' "firmware-changed reconciles overlays"
+  assert_file_contains "$TEST_ROOT/rcs.log" 'overlay:overlay-mount' "firmware-changed mounts overlays after reconcile"
+  assert_file_contains "$TEST_ROOT/rcs.log" 'ensure-combined-conf' "firmware-changed rebuilds opkg combined conf"
+  assert_file_contains "$TEST_ROOT/rcs.log" 'configure:demo' "firmware-changed configures ordered packages"
+  assert_file_contains "$TEST_ROOT/rcs.log" 'start-services:demo com.example.demo' "firmware-changed restarts enabled app services"
+  assert_file_contains "$TEST_ROOT/rcs.log" 'execute-startup:rcS.local' "firmware-changed runs startup scripts"
+  assert_file_exists "$TEST_DATA_DIR/firmware-changed" "firmware-changed marker file is created"
+
+  cleanup_rcs_runtime
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2034
+
+# USER EDITABLE SECTION
+# Copy this file as the minimal skeleton for a new install that uses Vespera.
+# Only the settings below are intended to be customized by package authors.
+# Everything else is managed by the shared installer runtime.
+
+# Valid callbacks
+# pre_remove
+# post_remove
+# finalize_remove - called after opkg has finished
+#
+# pre_install
+# post_install
+# finalize_install - called after opkg has finished
+#
+# Valid $PACKAGE_ACTION values
+# install|upgrade-install|configure|dev-install
+# remove|upgrade-remove|dev-remove
+
+PACKAGE_DBUS_NAME="Inetbox"
+
+# add only for custom devices, value is can be any string value
+PACKAGE_DEVICES="dbus-inetbox=Inetbox"
+
+PACKAGE_CUSTOM_OVERVIEW_PAGES="InetboxOverview"
+PACKAGE_CUSTOM_NAV_PAGES="MotorhomePage"
+PACKAGE_CUSTOM_MENUS="PageSettings/InetboxPageSettingsSubMenu"
+
+# Optional package-level app settings (JSON entries for dbus-lib add_settings)
+PACKAGE_DBUS_SETTINGS=''

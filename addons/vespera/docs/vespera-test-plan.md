@@ -1,20 +1,20 @@
-# opkg-manager Test Plan
+# vespera Test Plan
 
 ## Overview
-Comprehensive testing for opkg-manager installation/removal and core features.
+Comprehensive testing for vespera installation/removal and core features.
 
 ---
 
 ## Phase 1: Installation & Service Startup
 
 ### 1.1 Fresh Install
-- [ ] Install opkg-manager package via opkg
-- [ ] Verify `/data/opkg-manager/` directory structure exists
+- [ ] Install vespera package via opkg
+- [ ] Verify `/data/apps/vespera/` directory structure exists
 - [ ] Verify `/opt/victronenergy/gui/` QML pages present
 
 ### 1.2 UI Integration
 - [ ] Venus GUI loads without errors
-- [ ] opkg-manager pages appear in main menu
+- [ ] vespera pages appear in main menu
 - [ ] UI connects to service (VBusItem paths functional)
 
 ---
@@ -23,8 +23,8 @@ Comprehensive testing for opkg-manager installation/removal and core features.
 
 ### 2.1 Feed Configuration
 - [ ] View current feeds via opkg (UI or CLI)
-- [ ] Verify default feeds (opkg-manager, addons) present
-- [ ] Check feed cache in `/tmp/opkg-manager/feeds.json`
+- [ ] Verify default feeds (vespera, addons) present
+- [ ] Check feed cache in `/tmp/vespera/feeds.json`
 - [ ] Manually add custom feed via UI (add URL, save, verify)
 - [ ] Remove custom feed via UI (verify conf updated)
 - [ ] Switch between release and development feeds
@@ -43,7 +43,6 @@ Comprehensive testing for opkg-manager installation/removal and core features.
 - [ ] Search for available package in UI
 - [ ] Install package via UI (non-critical test addon recommended)
 - [ ] Verify package appears in installed list
-- [ ] Verify `/data/conf/opkg-manager/installed-packages.conf` updated
 - [ ] Check `/opt/victronenergy/<package>/` directory created
 - [ ] If package has service, verify it starts and runs
 
@@ -87,7 +86,7 @@ Comprehensive testing for opkg-manager installation/removal and core features.
 - [ ] Cancel operation mid-flight
 
 ### 5.2 Settings Persistence
-- [ ] Write to `/Settings/OpkgManager/*` paths
+- [ ] Write to `/Settings/Vespera/*` paths
 - [ ] Reboot and verify settings persist
 - [ ] Check `settings.xml` integration
 
@@ -96,19 +95,19 @@ Comprehensive testing for opkg-manager installation/removal and core features.
 ## Phase 6: Uninstall & Cleanup
 
 ### 6.1 Package Removal
-- [ ] Remove opkg-manager package via opkg
+- [ ] Remove vespera package via opkg
 - [ ] Verify prerm hook executes cleanly
 - [ ] Check for leftover processes: `ps aux | grep opkg`
 
 ### 6.2 Filesystem Cleanup
-- [ ] Verify service removed: `/service/opkgmanager` gone
+- [ ] Verify service removed: `/service/vespera` gone
 - [ ] Verify DBus interface unregistered
-- [ ] Check config files cleaned: `/etc/opkg/opkg-manager.conf` symlink removed
+- [ ] Check config files cleaned: `/etc/opkg/vespera.conf` symlink removed
 - [ ] Verify QML pages removed (or gracefully hidden)
-- [ ] Check `/var/log/opkg-manager/` logs for clean shutdown
+- [ ] Check `/var/log/vespera/` logs for clean shutdown
 
 ### 6.3 Fresh Install After Removal
-- [ ] Reinstall opkg-manager package
+- [ ] Reinstall vespera package
 - [ ] Verify clean install (no conflicts, settings reset)
 - [ ] Run Phase 1 checks again
 
@@ -138,10 +137,10 @@ Comprehensive testing for opkg-manager installation/removal and core features.
 ## Phase 8: Test Evidence
 
 ### Required Logs to Collect
-- [ ] `/var/log/opkg-manager/startup.log` (install/startup)
-- [ ] `/var/log/opkg-manager/system.log` (operations)
+- [ ] `/var/log/vespera/startup.log` (install/startup)
+- [ ] `/var/log/vespera/system.log` (operations)
 - [ ] `/var/log/gui/current` (UI errors)
-- [ ] `journalctl -u opkgmanager` (runit logs)
+- [ ] `journalctl -u vespera` (runit logs)
 
 ### Performance Benchmarks (Optional)
 - [ ] Time to install small package (< 100KB)

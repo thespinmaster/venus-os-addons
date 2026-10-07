@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+# shellcheck source=/data/dev/addons/vespera/src/data/apps/available/vespera/libs/installer-lib
+source "${VESPERA_ROOT:-}/data/apps/available/vespera/libs/installer-lib" "$@"
+set --
+
+__write_dbus_settings_to_dbus_list_file() {
+
+	installer_dbus_lib_build_manifest \
+		"${PACKAGE_DBUS_LIST_FILE}" \
+		"${PACKAGE_DBUS_NAME:-}" \
+		"${PACKAGE_DBUS_SETTINGS:-}" \
+		"${PACKAGE_CUSTOM_OVERVIEW_PAGES:-}" \
+		"${PACKAGE_CUSTOM_MENUS:-}" \
+		"${PACKAGE_DEVICES:-}"
+}
+
+__add_patch_files() {
+	echo_lang "$LANG_PACKAGE_PATCHING_FILES"
+
+	shopt -s nullglob
+	for patchfile in "$PACKAGE_DATA_INFO_DIR/$PACKAGE_NAME.installer"*-patch; do
+		addsource "libs/file-patcher-lib"
+
+		installer_lib_log_verbose2 && {
+			echo "  PATCH_SOURCE:$patchfile"
+			echo "    PATCH_FILES:"
+			# shellcheck disable=SC2005
+			echo "$(installer_lib_get_patch_file_list "$patchfile" | sed 's/^/      /')"
+		}
+
+		file_patcher_apply_patch "$patchfile"
+		# only adds *unique* files from *this* install
+		installer_lib_get_patch_file_list "$patchfile" | sort -u >> "$VESPERA_PATCH_LIST_FILE"
+	done
+}
+
+__process_default_conf_files() {
+	local conf_default_dir="$PACKAGE_INSTALL_DIR/$PACKAGE_NAME/conf-default"
+	local conf_dir="$PACKAGE_INSTALL_DIR/$PACKAGE_NAME/conf"
+
+	# --- Install/Upgrade move files from conf.default to conf only if they dont already exist ---
+	[[ ! -d "$conf_default_dir" ]] && return
+	mkdir -p "$conf_dir"
+	shopt -s nullglob
+	mv -n -- "$conf_default_dir"/* "$conf_dir"/
+	rm -rf "$conf_default_dir"
+}
+
+__add_dbus_settings_from_dbus_list_file() {
+	local previous_file="$VESPERA_WORKING_DIR/${PACKAGE_DBUS_LIST_FILE##*/}.prev"
+	local queue_file="$VESPERA_WORKING_DIR/${PACKAGE_NAME}-dbus-settings-set"
+
+	installer_dbus_lib_install \
+		"$PACKAGE_DBUS_LIST_FILE" \
+		"$queue_file" \
+		"$(installer_lib_is_upgrade && echo 1 || echo 0)" \
+		"$previous_file"
+}
+
+__register_services() {
+	local template_services_file="$VESPERA_DATA_DIR/info/$PACKAGE_NAME.$VESPERA_APP_TEMPLATE_SERVICES_FILE"
+
+	: > "$VESPERA_DATA_DIR/info/$PACKAGE_NAME.$VESPERA_APP_SERVICES_FILE"
+	for service_path in "/data/apps/available/$PACKAGE_NAME/service/"*; do
+		[[ ! -f "$service_path/run" ]] && continue
+		local service="${service_path##*/}"
+		echo "$service" >> "$VESPERA_DATA_DIR/info/$PACKAGE_NAME.$VESPERA_APP_SERVICES_FILE"
+	done
+
+	: > "$VESPERA_DATA_DIR/info/$PACKAGE_NAME.$VESPERA_APP_TEMPLATE_SERVICES_FILE"
+	for service_path in "/data/apps/available/$PACKAGE_NAME/service-templates/"*; do
+		[[ ! -f "$service_path/run" ]] && continue
+		local service="${service_path##*/}"
+		echo "$service" >> "$template_services_file"
+		DEVICE_SERVICE_NAME="$service"
+		addsource "libs/serial-device-installer-lib"
+		sdi_add_service_mapping
+	done
+}
+
+__add_vespera_startup_scripts() {
+	[[ -z $RCS_LOCAL_SCRIPT ]] && [[ -z $RCS_LOCAL_SCRIPT ]] && return
+	(
+		addsource "libs/file-lib"
+		[[ -n $RCS_LOCAL_SCRIPT ]] && file_lib_append_content_to_file "/data/rcS.local" 755 <<< "${RCS_LOCAL_SCRIPT}"
+		[[ -n $RC_LOCAL_SCRIPT ]] && file_lib_append_content_to_file "/data/rc.local" 755 <<< "${RC_LOCAL_SCRIPT}"
+	)
+}
+
+__install() {
+	__try_call "pre_install"
+
+	__process_default_conf_files
+
+	[[ -f "${PACKAGE_DATA_INFO_DIR}/buildtime" ]] &&
+		echo_lang "$LANG_PACKAGE_BUILD_TIME_ARG1" "$(< "${PACKAGE_DATA_INFO_DIR}/buildtime")"
+
+	# Phase 1: prepare package DBus manifest
+	__write_dbus_settings_to_dbus_list_file
+	installer_lib_phase_sync_custom_nav_pages "add" || return 1
+
+	__try_call "post_install"
+
+	__add_vespera_startup_scripts
+
+	# Phase 2: patch + settings apply
+	__add_patch_files
+	echo "Processing Dbus settings"
+	__add_dbus_settings_from_dbus_list_file
+
+	# Phase 3: runtime enablement
+	echo "$PACKAGE_DBUS_NAME" > "$VESPERA_DATA_DIR/info/$PACKAGE_NAME.$VESPERA_DBUS_NAME"
+
+	installer_lib_update_install_list
+	__register_services
+
+	echo "Updating database"
+	return 0
+}
+
+__firmware_changed() {
+	installer_lib_log_verbose2 && echo "In installer_lib_firmware_changed"
+	__add_patch_files
+	__try_call "firmware_changed"
+}
+
+installer_lib_initialize
+
+case "${PACKAGE_ACTION}" in
+	install|upgrade-install|configure|dev-install)
+		echo_lang "$LANG_INSTALL_ACTION_ARG1" "$PACKAGE_ACTION"
+		__install ;;
+	firmware-changed)
+		__firmware_changed ;;
+esac

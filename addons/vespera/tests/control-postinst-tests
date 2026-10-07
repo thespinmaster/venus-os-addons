@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_control="/data/dev/addons/vespera/src/CONTROL/postinst"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+
+TEST_ROOT=
+SCRIPT_PATH=
+TEST_APP_ROOT=
+
+stage_postinst_runtime() {
+  TEST_ROOT="$(vt_make_test_root)"
+  TEST_APP_ROOT="$TEST_ROOT/data/apps/available/vespera"
+  SCRIPT_PATH="$TEST_ROOT/demo.postinst"
+
+  mkdir -p "$TEST_ROOT/var/lock" "$TEST_ROOT/work" "$TEST_APP_ROOT/scripts"
+
+  cp "$source_control" "$SCRIPT_PATH"
+  chmod +x "$SCRIPT_PATH"
+
+  cat > "$TEST_APP_ROOT/scripts/install" <<'EOF'
+#!/usr/bin/env bash
+printf 'install:%s\n' "$*" >> "$TEST_LOG"
+EOF
+  chmod +x "$TEST_APP_ROOT/scripts/install"
+
+  ln -s "$TEST_ROOT/work" "$TEST_ROOT/var/lock/vespera"
+  printf '3\n' > "$TEST_ROOT/work/verbosity"
+
+  : > "$TEST_ROOT/demo.installer"
+}
+
+cleanup_postinst_runtime() {
+  [[ -n "${TEST_ROOT:-}" ]] && vt_safe_rm_rf "$TEST_ROOT"
+}
+
+test_control_postinst_invokes_install_script_with_expected_args() {
+  stage_postinst_runtime
+
+  TEST_LOG="$TEST_ROOT/postinst.log" VESPERA_ROOT="$TEST_ROOT" \
+    bash "$SCRIPT_PATH" configure >/dev/null 2>&1
+
+  assert_exitcode 0
+  assert_file_contains "$TEST_ROOT/postinst.log" "install:configure $TEST_ROOT/demo.installer $TEST_ROOT/work 3"
+
+  cleanup_postinst_runtime
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+	test_runner_all --summary ""
+fi

@@ -1,0 +1,214 @@
+#!/bin/bash
+
+# dbus-lib: Functions for use with the com.victronenergy.settings service
+
+set -o nounset
+
+# Trim trailing slash and add leading slash if missing
+__dbus_lib_normalize_dbus_path() {
+	local -n __root_path="${1}"
+	__root_path="/${__root_path#/}"
+	__root_path="${__root_path%/}"
+}
+
+# Function: dbus_lib_add_settings
+# Adds all dbus settings provided from stdin.
+# Arguments:
+#   stdin - lines to add in the format
+#           Accepts any stdin source: <<< string, < file, or pipe.
+# Format:
+#    {"path":"/Settings/Vespera/ShowCompact", "default":0, "min":0, "max":1}
+#    {"path":"/Settings/Vespera/NoAction", "default":0, "min":0, "max":1}
+#    Lines with comments and white space are ignored
+dbus_lib_add_settings() {
+	local settings
+	settings=$(sed -n 's/^[[:space:]]*\({"path":.*\)$/\1,/p' | tr -d '\n')
+	[[ -n "$settings" ]] &&
+		dbus -y com.victronenergy.settings / AddSettings "%[ $settings ]" &> /dev/null
+}
+
+# Function: dbus_lib_remove_settings
+# Removes all dbus settings provided from stdin.
+# Arguments:
+#   stdin - lines to add in the format
+#           Accepts any stdin source: <<< string, < file, or pipe.
+# Format:
+#    {"path":"/Settings/Vespera/ShowCompact", "default":0, "min":0, "max":1}
+#    {"path":"/Settings/Vespera/NoAction", "default":0, "min":0, "max":1}
+#    This can be the same source used for dbus_lib_add_settings
+#    Lines with comments and white space are ignored
+dbus_lib_remove_settings () {
+		local settings
+	local paths
+
+	settings="$(cat)"
+
+	paths="$(printf '%s\n' "$settings" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')"
+
+	[[ -n "$paths" ]] || paths="$settings"
+
+	settings="$(
+		printf '%s\n' "$paths" |
+			tr -s '[:space:]' '\n' |
+			sed "s/.*/'&'/" |
+			sed '$!s/$/, /'
+	)"
+
+	[[ -n "$settings" ]] || {
+		echo "ERROR:dbus_lib_remove_settings: No settings supplied" >&2
+		return 1
+	}
+
+	dbus -y com.victronenergy.settings / RemoveSettings \
+		"%[ $settings ]" \
+		&> /dev/null
+}
+
+# Function: dbus_lib_get_branch_names
+# returns a list of the unique names of branches/leafs under the given path
+# combine with grep to do further filtering
+# returns the unique names of branches/leafs under a branch
+# combine with grep to do further filtering
+dbus_lib_get_branch_names() {
+	local root_path="${1}"
+	local dbus_output=
+
+	__dbus_lib_normalize_dbus_path root_path
+
+	! dbus_output=$(dbus -y com.victronenergy.settings "$root_path" GetValue) && return 1;
+
+	printf '%s\n' "$dbus_output" |
+    sed "s/, '/,\n'/g" |
+    sed -n "s/^[[:space:]{]*'\([^/']*\).*/\1/p" |
+    sort -u
+}
+
+# Function: dbus_lib_get_branch_paths
+# returns a list of dbus paths under the given path
+# combine with grep to do further filtering
+dbus_lib_get_branch_paths() {
+	local root_path="${1}"
+
+	__dbus_lib_normalize_dbus_path root_path
+
+	! dbus_output=$(dbus -y com.victronenergy.settings "$root_path" GetValue) && return 1;
+
+	printf '%s\n' "$dbus_output" |
+		sed "s/, '/,\n'/g" |
+		sed -n "s/^[[:space:]{]*'\([^']*\)'.*/\1/p" |
+		sed "s|^|${root_path}/|"
+}
+
+# Function: dbus_lib_set_string_value
+# Sets a single string setting, if the setting does not exist its added
+# Arguments:
+#   $1 - path (optional prefix)
+#   $2 - the string value to set
+dbus_lib_set_string_value() {
+	local path="${1}"
+	local value="${2}"
+
+	__dbus_lib_normalize_dbus_path path
+
+	if dbus -y com.victronenergy.settings "$path" SetValue "$value" 2>/dev/null; then
+		return 0
+	fi
+
+	local base_path="${path%/*}"
+  local name="${path##*/}"
+	if dbus -y com.victronenergy.settings / AddSetting "$base_path" "$name" "$value" s 0 0; then
+		return 0
+	fi
+
+	echo "Error: Adding setting: AddSetting \"${path}\"" >&2
+	return 1
+}
+
+# Function: dbus_lib_get_value
+# Get a value from the dbus settings service
+# com.victronenergy.settings /Settings/Arg1/
+# AddSetting is called first to create the path if it doesn't exist (idempotent).
+# Arguments:
+#   $1 - path (string) Path and name of the value to retrieve "Vespera/SerialInstaller"
+#   $2 - setting (string) The name of the setting to get
+#   $3 - default (optional string) The default value if the value returned is empty.
+dbus_lib_get_value() {
+	local path="$1"
+	local -n __value="$2"
+	local default_value="${3:-}"
+	local value
+
+	__dbus_lib_normalize_dbus_path path
+
+	value="$(dbus -y com.victronenergy.settings "$path" GetValue 2>/dev/null)"
+
+	#strip single quotes from the start and end
+	value="${value#\'}"
+	value="${value%\'}"
+
+	if [[ -z $value ]]; then
+		__value="$default_value"
+		if [[ -z $__value ]]; then
+			return 1 # return 1 if no value or default is provided
+		fi
+	else
+		__value="$value"
+	fi
+	return 0
+}
+
+# Function: dbus_lib_delete_tree
+# Deletes all child settings under the given dbus path
+# Arguments:
+#   $1 - root_path: the dbus path to delete, e.g. "/Settings/Vespera/SerialInstaller"
+#        Must not be empty or "/" or /Settings.
+#   $2 - optional grep filter string
+dbus_lib_delete_tree() {
+	local root_path="${1}"
+	local filter="${2:-}"
+	local paths=
+
+	__dbus_lib_normalize_dbus_path root_path
+
+	# Don't allow deleting root / or /Settings
+	[[ -z "$root_path" || "$root_path" == "/" || "$root_path" == "/Settings" ]] && {
+		echo "ERROR:dbus_lib_delete_tree:Invalid path:" >&2; return 1; }
+
+	! paths=$(dbus_lib_get_branch_paths "$root_path") && return 1;
+
+	if [[ -n "$filter" ]]; then
+		paths=$(grep "$filter" <<<"$paths")
+	fi
+
+	# Convert to comma-separated, quoted paths
+	settings=
+	while IFS= read -r path; do
+		[[ -n "$settings" ]] && settings+=','
+		settings+="\"$path\""
+	done <<< "$paths"
+
+  dbus -y com.victronenergy.settings / RemoveSettings "%[ $settings ]" &> /dev/null
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	case "${1:-}" in
+		dbus-remove-settings|dbus-delete-item|dbus-delete-items)
+			shift
+			printf '%s\n' "$@" | dbus_lib_remove_settings
+			;;
+		dbus-add-settings)
+			shift
+			dbus_lib_add_settings <<< "$@"
+			;;
+		dbus-delete-tree)
+			shift
+			dbus_lib_delete_tree "$1" "${2-}"
+			;;
+		*)
+			echo "Invalid command"
+			echo "  dbus-remove-settings|dbus-delete-item|dbus-delete-items"
+			echo "  dbus-add-settings"
+			echo "  dbus-delete-tree"
+			;;
+	esac
+fi

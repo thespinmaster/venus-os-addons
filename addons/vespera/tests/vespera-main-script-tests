@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_root="$this_path/../src/data/apps/available/vespera"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+
+TEST_ROOT=
+TEST_APP_ROOT=
+TEST_LOG=
+
+stage_main_runtime() {
+  TEST_ROOT="$(vt_make_test_root)"
+  TEST_APP_ROOT="$TEST_ROOT/app/vespera"
+  TEST_LOG="$TEST_ROOT/vespera-main.log"
+
+  mkdir -p "$TEST_APP_ROOT/libs" "$TEST_APP_ROOT/scripts" "$TEST_ROOT/bin"
+
+  cp "$source_root/vespera" "$TEST_APP_ROOT/vespera"
+  cp "$source_root/libs/source-lib" "$TEST_APP_ROOT/libs/source-lib"
+  chmod +x "$TEST_APP_ROOT/vespera" "$TEST_APP_ROOT/libs/source-lib"
+
+  cat > "$TEST_APP_ROOT/libs/vespera-lib" <<'EOF'
+#!/usr/bin/env bash
+VESPERA_IN_GUI=false
+VESPERA_VERBOSITY=0
+VESPERA_COMBINED_CONF_FILE="/tmp/vespera-test-opkg.conf"
+
+opkg_ensure_combined_conf_file() {
+  printf '%s\n' "ensure_conf" >> "$VESPERA_TEST_LOG"
+}
+
+opkg_lib_feed_crud() {
+  printf 'feed:%s\n' "$*" >> "$VESPERA_TEST_LOG"
+}
+
+vespera_lib_enable_disable() {
+  printf 'enable_disable:%s\n' "$*" >> "$VESPERA_TEST_LOG"
+}
+
+opkg_lib_update() {
+  printf 'update:%s\n' "$*" >> "$VESPERA_TEST_LOG"
+  return 0
+}
+
+vespera_lib_index() {
+  printf '%s\n' 'index' >> "$VESPERA_TEST_LOG"
+}
+
+opkg_lib_list_enabled_packages() {
+  printf 'list_enabled:%s\n' "$*" >> "$VESPERA_TEST_LOG"
+}
+
+vespera_lib_list_service_status() {
+  printf 'list_services:%s\n' "$*" >> "$VESPERA_TEST_LOG"
+}
+
+opkg_lib_process_opkg_status() {
+  cat
+}
+
+vespera_lib_pre_install() {
+  printf 'pre:%s\n' "$*" >> "$VESPERA_TEST_LOG"
+}
+
+vespera_lib_post_install() {
+  printf 'post:%s\n' "$*" >> "$VESPERA_TEST_LOG"
+}
+EOF
+  chmod +x "$TEST_APP_ROOT/libs/vespera-lib"
+
+  cat > "$TEST_APP_ROOT/scripts/inspect" <<'EOF'
+#!/usr/bin/env bash
+printf 'inspect:%s\n' "$*" >> "$VESPERA_TEST_LOG"
+EOF
+  chmod +x "$TEST_APP_ROOT/scripts/inspect"
+
+  cat > "$TEST_APP_ROOT/libs/device-lib" <<'EOF'
+#!/usr/bin/env bash
+printf 'device:%s\n' "$*" >> "$VESPERA_TEST_LOG"
+EOF
+  chmod +x "$TEST_APP_ROOT/libs/device-lib"
+
+  cat > "$TEST_ROOT/bin/opkg" <<'EOF'
+#!/usr/bin/env bash
+printf 'opkg:%s\n' "$*" >> "$VESPERA_TEST_LOG"
+if [[ "${1:-}" == "-f" && "${3:-}" == "list-installed" ]]; then
+  printf '%s\n' 'vespera - 1.0'
+fi
+EOF
+  chmod +x "$TEST_ROOT/bin/opkg"
+
+  : > "$TEST_LOG"
+}
+
+cleanup_main_runtime() {
+  if [[ -n "${TEST_ROOT:-}" ]]; then
+    vt_safe_rm_rf "$TEST_ROOT"
+  fi
+}
+
+test_vespera_main_dispatches_feed_command() {
+  stage_main_runtime
+
+  PATH="$TEST_ROOT/bin:$PATH" VESPERA_TEST_LOG="$TEST_LOG" \
+    bash "$TEST_APP_ROOT/vespera" feed add demo http://example.com >/dev/null 2>&1
+
+  assert_exitcode 0
+  assert_file_contains "$TEST_LOG" 'ensure_conf'
+  assert_file_contains "$TEST_LOG" 'feed:add demo http://example.com'
+
+  cleanup_main_runtime
+}
+
+test_vespera_main_dispatches_inspect_command() {
+  stage_main_runtime
+
+  PATH="$TEST_ROOT/bin:$PATH" VESPERA_TEST_LOG="$TEST_LOG" \
+    bash "$TEST_APP_ROOT/vespera" inspect demo >/dev/null 2>&1
+
+  assert_exitcode 0
+  assert_file_contains "$TEST_LOG" 'inspect:demo'
+
+  cleanup_main_runtime
+}
+
+test_vespera_main_passes_unknown_command_to_opkg_with_hooks() {
+  stage_main_runtime
+
+  PATH="$TEST_ROOT/bin:$PATH" VESPERA_TEST_LOG="$TEST_LOG" \
+    bash "$TEST_APP_ROOT/vespera" install demo-package >/dev/null 2>&1
+
+  assert_exitcode 0
+  assert_file_contains "$TEST_LOG" 'pre:install demo-package'
+  assert_file_contains "$TEST_LOG" 'opkg:-f /tmp/vespera-test-opkg.conf install demo-package'
+  assert_file_contains "$TEST_LOG" 'post:install'
+
+  cleanup_main_runtime
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

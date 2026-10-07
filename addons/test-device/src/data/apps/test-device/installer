@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+
+PACKAGE_DBUS_NAME="TestDevice"
+
+declare -A PACKAGE_DEVICE=(
+	["test-device-service"]="Test Device"
+)
+
+PACKAGE_CUSTOM_OVERVIEW_PAGES=
+PACKAGE_DBUS_SETTINGS=
+
+#PACKAGE_DBUS_SETTINGS_DEPRECATED="
+#		{'path':'/Settings/Vespera/CustomMenus/PageSettingsDisplay/PageSettingsNeShuntSubMenu'}
+#"
+
+pre_install() {
+	if [[ $PACKAGE_ACTION == "dev-install" ]]; then
+		install_lib_add_custom_device
+		exit 0
+	fi
+}
+pre_remove() {
+	if [[ "$PACKAGE_ACTION" == "dev-remove" ]]; then
+  	echo "dev-install"
+		install_lib_remove_custom_device
+		exit 0
+	fi
+}
+
+# shellcheck source=/data/dev/addons/vespera/src/data/apps/vespera/libs/source-lib
+source "${VESPERA_ROOT:-}/data/apps/vespera/libs/source-lib"
+addsource libs/installer-lib "$@"

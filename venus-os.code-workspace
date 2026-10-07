@@ -1,17 +1,14 @@
 {
 	"folders": [
 		{
-			"path": "addons/opkg-manager"
-		},
-		{
-			"path": "/data/dev/addons/dbus-inetbox"
+			"name": "vespera (data)",
+			"path": "/data/apps/vespera/"
 		},
 		{
 			"path": "/home/admin_user/dev/repos/venus-os/docs"
 		},
 		{
-			"name": "dev",
-			"path": "."
+			"path": "./feeds"
 		},
 		{
 			"name": "data",
@@ -41,6 +38,10 @@
 		},
 		{
 			"path": "../../etc/venus"
+		},
+		{
+			"name": "dev",
+			"path": "."
 		}
 	],
 	"settings": {
@@ -77,7 +78,7 @@
 				"**/.vscode-server": true
 		},
 		"python.analysis.extraPaths": [
-			"/data/dev/addons/opkg-manager/src/opt/victronenergy/opkg-manager-service",
+			"/data/dev/addons/vespera/src/opt/victronenergy/vespera-service",
 		  "/data/dev/addons/dbus-inetbox/src/opt/victronenergy/dbus-inetbox",
 			"/data/dev/addons/dbus-ne-shunt/src/opt/victronenergy/dbus-ne-shunt",
 			"/data/dev/addons/test-device/src/opt/victronenergy/test-device-service"

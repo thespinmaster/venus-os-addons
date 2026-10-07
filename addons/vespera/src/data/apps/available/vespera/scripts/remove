@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+# shellcheck source=/data/dev/addons/vespera/src/data/apps/available/vespera/libs/installer-lib
+source "${VESPERA_ROOT:-}/data/apps/available/vespera/libs/installer-lib" "$@"
+set --
+
+__process_default_conf_files() {
+	local conf_default_dir="$PACKAGE_INSTALL_DIR/$PACKAGE_NAME/conf-default"
+	local conf_dir="$PACKAGE_INSTALL_DIR/$PACKAGE_NAME/conf"
+
+	installer_lib_is_upgrade && return
+	local list_file="$PACKAGE_DATA_INFO_DIR/$PACKAGE_NAME.list"
+
+	if [[ -d "$conf_dir" && -f "$list_file" ]]; then
+		for file in "$conf_dir"/*; do
+			[[ -f "$file" ]] || continue
+			local filename="${file##*/}"
+			local target_path="$conf_default_dir/$filename"
+			# Match lines starting with the exact target path followed by a tab or space
+			grep -qE "^${target_path}([[:space:]]|$)" "$list_file"  && rm -f "$file"
+		done
+	fi
+	rmdir "$conf_dir" 2>/dev/null
+}
+
+__remove_dbus_settings_from_file() {
+	[[ -f "$PACKAGE_DBUS_LIST_FILE" ]] || return 0
+	installer_lib_is_upgrade && return
+	installer_dbus_lib_remove "$PACKAGE_DBUS_LIST_FILE"
+}
+
+__remove_patch_files() {
+	echo_lang "$LANG_REVERTING_PATCHED_FILES"
+
+	shopt -s nullglob
+	for patchfile in "$PACKAGE_DATA_INFO_DIR/$PACKAGE_NAME.installer"*-patch; do
+		addsource "libs/file-patcher-lib"
+
+		installer_lib_log_verbose2 && {
+			echo "  PATCH_SOURCE:$patchfile"
+			echo "    PATCH_FILES:"
+			# shellcheck disable=SC2005
+			echo "$(installer_lib_get_patch_file_list "$patchfile" | sed 's/^/      /')"
+		}
+
+		file_patcher_revert_patch "$patchfile"
+		__remove_patch_files_from_patch_list "$patchfile"
+	done
+}
+
+__remove_patch_files_from_patch_list() {
+	local patchfile="${1}"
+	local tmp_file path overlay_path
+
+	[[ ! -f "$VESPERA_PATCH_LIST_FILE" ]] && return
+
+	local -A overlay_path_mappings=()
+	local overlay_file="${VESPERA_DATA_DIR}/info/${PACKAGE_NAME}.installer-overlays"
+	if [[ -f $overlay_file ]]; then
+		while IFS='=' read -r target upper_dir; do
+    	overlay_path_mappings["$target"]="$upper_dir"
+		done < <("$VESPERA_DATA_DIR/info/vespera.overlay-lib" get-upper-overlay-path-mappings "$overlay_file")
+	installer_lib_log_verbose2 && echo "  overlay_path_mappings count=${#overlay_path_mappings[@]}"
+	fi
+
+	tmp_file="$(mktemp)" || return 1
+
+	installer_lib_get_patch_file_list "$patchfile" | sort -u | while IFS= read -r file; do
+		[[ -z "$file" ]] && continue
+
+		# shellcheck disable=SC2015
+		awk -v file="$file" '!done && $0 == file { done=1; next } { print }' \
+			"$VESPERA_PATCH_LIST_FILE" > "$tmp_file" && mv "$tmp_file" "$VESPERA_PATCH_LIST_FILE" || continue
+
+		if ! grep -qxF "$file" "$VESPERA_PATCH_LIST_FILE"; then
+			path="${file%/*}"
+			overlay_path="${overlay_path_mappings[$path]-}"
+			[[ -n $overlay_path ]] && file=$overlay_path/${file##*/}
+
+			installer_lib_log_verbose2 && echo "  No longer patched; removing file: $file"
+			rm -f "$file"
+		fi
+	done
+
+	rm -f "$tmp_file"
+}
+
+__unregister_services() {
+	local template_services_file="$VESPERA_DATA_DIR/info/$PACKAGE_NAME.$VESPERA_APP_TEMPLATE_SERVICES_FILE"
+
+	for service_path in $(< "$template_services_file"); do
+		[[ ! -f "$service_path/run" ]] && continue
+		DEVICE_SERVICE_NAME="${service_path##*/}"
+		addsource "libs/serial-device-installer-lib"
+		sdi_remove_service_mapping
+	done
+}
+
+__phase_remove_runtime() {
+	if ! installer_lib_is_upgrade; then
+		cp "${VESPERA_DATA_DIR}/info/$PACKAGE_NAME.installer-services" "$VESPERA_WORKING_DIR"
+	fi
+
+	installer_lib_update_install_list
+
+	__unregister_services
+
+	# move these as we dynamically added them
+	[[ -f "$VESPERA_DATA_DIR/info/$PACKAGE_NAME.$VESPERA_APP_SERVICES_FILE" ]] &&
+		mv "$VESPERA_DATA_DIR/info/$PACKAGE_NAME.$VESPERA_APP_SERVICES_FILE" "$VESPERA_WORKING_DIR"
+
+	[[ -f "$VESPERA_DATA_DIR/info/$PACKAGE_NAME.$VESPERA_APP_TEMPLATE_SERVICES_FILE" ]] &&
+		mv "$VESPERA_DATA_DIR/info/$PACKAGE_NAME.$VESPERA_APP_TEMPLATE_SERVICES_FILE" "$VESPERA_WORKING_DIR"
+
+	rm -f "$VESPERA_DATA_DIR/info/$PACKAGE_NAME.$VESPERA_DBUS_NAME"
+}
+
+__remove_cleanup() {
+	__remove_file_if_empty() {
+		local file="${1}"
+		[[ -f "$file" ]] && [[ -z "$(sed 's/[[:space:]]//g' "$file")" ]] && rm -f "$file"
+	}
+
+	# 1. patch list /data/var/vespera/patch.list
+	__remove_file_if_empty "$VESPERA_DATA_DIR/patch.list"
+
+	# 2. python cache dirs __pycache__
+	find "$PACKAGE_INSTALL_DIR/$PACKAGE_NAME/" -type d -name '__pycache__' -exec rm -rf {} \; 1>/dev/null 2>&1
+
+}
+
+__remove_vespera_startup_scripts() {
+	(
+		addsource "libs/file-lib"
+		file_lib_remove_content_from_file "/data/rcS.local" <<< "${RCS_LOCAL_SCRIPT}"
+		file_lib_remove_content_from_file "/data/rc.local" <<< "${RC_LOCAL_SCRIPT}"
+	)
+}
+
+__run_remove() {
+	[[ -z "${PACKAGE_NAME}" ]] && {
+		echo "ERROR: PACKAGE_NAME not set"
+		return 1
+	}
+
+	__try_call "pre_remove" || true
+
+	(
+		echo "Stopping and Removing Services"
+		"${PACKAGE_INSTALL_DIR}/vespera/scripts/remove-services" "${PACKAGE_NAME}" _
+		! installer_lib_is_upgrade &&
+			"${PACKAGE_INSTALL_DIR}/vespera/libs/device-lib" remove-all "${PACKAGE_DBUS_NAME}"
+	)
+
+	__process_default_conf_files
+
+	# Phase 1: remove rc hooks
+	[[ ${PACKAGE_NAME} == vespera ]] && __remove_vespera_startup_scripts
+
+	# Phase 2: patch and package state cleanup
+	__remove_patch_files || true
+	if ! installer_lib_is_upgrade && [[ -n "${PACKAGE_CUSTOM_NAV_PAGES:-}" ]]; then
+		installer_lib_phase_sync_custom_nav_pages "remove" || true
+	fi
+	__remove_dbus_settings_from_file || true
+
+	# Phase 3: runtime disable/separate app lifecycle
+	__phase_remove_runtime
+
+	__try_call "post_remove" || true
+
+	__remove_cleanup
+	return 0
+}
+
+installer_lib_initialize
+
+case "${PACKAGE_ACTION}" in
+	remove|upgrade-remove|remove-post|dev-remove)
+		echo_lang "$LANG_INSTALL_ACTION_ARG1" "$PACKAGE_ACTION"
+		__run_remove
+		;;
+	esac

@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_root="$this_path/../src/data/apps/available/vespera"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+
+TEST_ROOT=
+TEST_APP_ROOT=
+TEST_DATA_DIR=
+
+stage_remove_services_runtime() {
+  TEST_ROOT="$(vt_make_test_root)"
+  TEST_APP_ROOT="$TEST_ROOT/app/vespera"
+  TEST_DATA_DIR="$TEST_ROOT/data/var/vespera"
+
+  mkdir -p "$TEST_APP_ROOT/scripts" "$TEST_APP_ROOT/conf" "$TEST_DATA_DIR/info" "$TEST_ROOT/bin"
+  mkdir -p "$TEST_ROOT/service" "$TEST_ROOT/opt/victronenergy/service-templates"
+
+  cp "$source_root/scripts/remove-services" "$TEST_APP_ROOT/scripts/remove-services"
+  chmod +x "$TEST_APP_ROOT/scripts/remove-services"
+
+  sed -i "s|/service/|$TEST_ROOT/service/|g" "$TEST_APP_ROOT/scripts/remove-services"
+  sed -i "s|/opt/victronenergy/service-templates/|$TEST_ROOT/opt/victronenergy/service-templates/|g" "$TEST_APP_ROOT/scripts/remove-services"
+
+  cat > "$TEST_APP_ROOT/conf/vespera.conf" <<EOF
+#!/usr/bin/env bash
+VESPERA_DATA_DIR="$TEST_DATA_DIR"
+VESPERA_APP_SERVICES_FILE="app-services"
+VESPERA_APP_TEMPLATE_SERVICES_FILE="app-template-services"
+EOF
+
+  cat > "$TEST_ROOT/bin/svc" <<'EOF'
+#!/usr/bin/env bash
+printf 'svc:%s\n' "$*" >> "$TEST_LOG"
+EOF
+  chmod +x "$TEST_ROOT/bin/svc"
+}
+
+cleanup_remove_services_runtime() {
+  [[ -n "${TEST_ROOT:-}" ]] && vt_safe_rm_rf "$TEST_ROOT"
+}
+
+test_remove_services_removes_regular_and_template_service_paths() {
+  stage_remove_services_runtime
+  local log_file="$TEST_ROOT/remove-services.log"
+
+  mkdir -p "$TEST_ROOT/service/svc-a/log"
+  mkdir -p "$TEST_ROOT/service/tpl-a.ttyUSB0/log"
+  ln -sf "$TEST_ROOT/data/apps/available/demo/service-templates/tpl-a" "$TEST_ROOT/opt/victronenergy/service-templates/tpl-a"
+
+  cat > "$TEST_DATA_DIR/info/demo.app-services" <<'EOF'
+svc-a
+EOF
+
+  cat > "$TEST_DATA_DIR/info/demo.app-template-services" <<'EOF'
+tpl-a
+EOF
+
+  local output
+  output="$( TEST_LOG="$log_file" PATH="$TEST_ROOT/bin:$PATH" bash -c '
+    refresh_devices=false
+    set -- demo refresh_devices
+    . "$0"
+    echo "refresh=$refresh_devices"
+  ' "$TEST_APP_ROOT/scripts/remove-services" )"
+
+  assert_exitcode 0
+  assert_file_not_exist "$TEST_ROOT/service/svc-a"
+  assert_file_not_exist "$TEST_ROOT/service/tpl-a.ttyUSB0"
+  assert_file_not_exist "$TEST_ROOT/opt/victronenergy/service-templates/tpl-a"
+  assert_file_contains "$log_file" "svc:-dx $TEST_ROOT/service/"
+  assert_contains 'refresh=true' "$output"
+
+  cleanup_remove_services_runtime
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

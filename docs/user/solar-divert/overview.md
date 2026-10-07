@@ -7,7 +7,7 @@ One use for this is for fridges that support solar+ (S+) (basicaly the same a ve
 
 ## Prerequisite
 
-Install [Opkg Manager](../opkg-manager/setup.md) first before using this add-on.
+Install [Opkg Manager](../vespera/setup.md) first before using this add-on.
 
 ---
 

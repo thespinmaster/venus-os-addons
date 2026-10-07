@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_root="$this_path/../src/data/apps/available/vespera"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+
+TEST_ROOT=
+
+stage_install_runtime() {
+  TEST_ROOT="$(vt_make_test_root)"
+
+  mkdir -p "$TEST_ROOT/data/apps/available/vespera/scripts"
+  mkdir -p "$TEST_ROOT/data/apps/available/vespera/libs"
+  mkdir -p "$TEST_ROOT/data/apps/available/demo/service/svc-a"
+  mkdir -p "$TEST_ROOT/data/apps/available/demo/service-templates/tpl-a"
+  mkdir -p "$TEST_ROOT/data/apps/available/demo/conf-default"
+  mkdir -p "$TEST_ROOT/data/var/vespera/info"
+  mkdir -p "$TEST_ROOT/work"
+
+  cp "$source_root/scripts/install" "$TEST_ROOT/data/apps/available/vespera/scripts/install"
+  chmod +x "$TEST_ROOT/data/apps/available/vespera/scripts/install"
+
+  sed -i "s|source \"\${VESPERA_ROOT:-}/data/apps/available/vespera/libs/installer-lib\" \"\$@\"|source \"$TEST_ROOT/data/apps/available/vespera/libs/installer-lib\" \"\$@\"|" "$TEST_ROOT/data/apps/available/vespera/scripts/install"
+  sed -i "s|\"/data/apps/available/\$PACKAGE_NAME/service/\"|\"$TEST_ROOT/data/apps/available/\$PACKAGE_NAME/service/\"|g" "$TEST_ROOT/data/apps/available/vespera/scripts/install"
+  sed -i "s|\"/data/apps/available/\$PACKAGE_NAME/service-templates/\"|\"$TEST_ROOT/data/apps/available/\$PACKAGE_NAME/service-templates/\"|g" "$TEST_ROOT/data/apps/available/vespera/scripts/install"
+  sed -i "s|\"/data/apps/enabled/\$PACKAGE_NAME\"|\"$TEST_ROOT/data/apps/enabled/\$PACKAGE_NAME\"|g" "$TEST_ROOT/data/apps/available/vespera/scripts/install"
+  sed -i "s|/data/rcS.local|$TEST_ROOT/data/rcS.local|g" "$TEST_ROOT/data/apps/available/vespera/scripts/install"
+  sed -i "s|/data/rc.local|$TEST_ROOT/data/rc.local|g" "$TEST_ROOT/data/apps/available/vespera/scripts/install"
+
+  cat > "$TEST_ROOT/data/apps/available/demo/service/svc-a/run" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "$TEST_ROOT/data/apps/available/demo/service/svc-a/run"
+
+  cat > "$TEST_ROOT/data/apps/available/demo/service-templates/tpl-a/run" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "$TEST_ROOT/data/apps/available/demo/service-templates/tpl-a/run"
+
+  cat > "$TEST_ROOT/data/apps/available/demo/conf-default/demo.conf" <<'EOF'
+key=value
+EOF
+
+  cat > "$TEST_ROOT/data/apps/available/vespera/libs/installer-lib" <<'EOF'
+#!/usr/bin/env bash
+PACKAGE_ACTION="${1:-}"
+PACKAGE_INSTALLER_FILE="${2:-}"
+VESPERA_WORKING_DIR="${3:-}"
+VESPERA_VERBOSITY="${4:-0}"
+PACKAGE_NAME="${PACKAGE_INSTALLER_FILE##*/}"; PACKAGE_NAME="${PACKAGE_NAME%.*}"
+PACKAGE_INSTALL_DIR="${VESPERA_ROOT}/data/apps/available"
+PACKAGE_DATA_INFO_DIR="$(dirname "$PACKAGE_INSTALLER_FILE")"
+VESPERA_DATA_DIR="${VESPERA_ROOT}/data/var/vespera"
+VESPERA_PATCH_LIST_FILE="${VESPERA_ROOT}/data/var/vespera/patch.list"
+VESPERA_INSTALL_STATE_FILE="install-state"
+VESPERA_APP_SERVICES_FILE="app-services"
+VESPERA_APP_TEMPLATE_SERVICES_FILE="app-template-services"
+VESPERA_DBUS_NAME="dbus-name"
+PACKAGE_DBUS_NAME="com.example.${PACKAGE_NAME}"
+PACKAGE_DBUS_LIST_FILE="$VESPERA_DATA_DIR/info/$PACKAGE_NAME.dbus-list"
+PACKAGE_DBUS_SETTINGS=
+PACKAGE_CUSTOM_OVERVIEW_PAGES=
+PACKAGE_CUSTOM_MENUS=
+PACKAGE_DEVICES=
+RCS_LOCAL_SCRIPT=
+RC_LOCAL_SCRIPT=
+LANG_INSTALL_ACTION_ARG1=install_action
+LANG_PACKAGE_PATCHING_FILES=patching
+LANG_PACKAGE_BUILD_TIME_ARG1=build_time
+
+source "$PACKAGE_INSTALLER_FILE"
+
+echo_lang() { :; }
+installer_lib_initialize() { :; }
+installer_lib_log_verbose2() { return 1; }
+installer_lib_is_upgrade() { [[ "$PACKAGE_ACTION" == "upgrade-install" ]]; }
+installer_lib_phase_sync_custom_nav_pages() {
+  printf 'sync-nav:%s\n' "$1" >> "$VESPERA_ROOT/install.log"
+}
+installer_dbus_lib_build_manifest() {
+  printf 'manifest:%s|%s\n' "$1" "$2" >> "$VESPERA_ROOT/install.log"
+  : > "$1"
+}
+installer_lib_update_install_list() {
+	printf 'demo enabled\n' >> "$VESPERA_WORKING_DIR/install-state"
+}
+
+installer_dbus_lib_install() {
+  printf 'install-dbus:%s\n' "$1" >> "$VESPERA_ROOT/install.log"
+}
+installer_lib_get_patch_file_list() {
+  printf '%s\n' '/opt/victronenergy/gui/qml/Demo.qml'
+}
+
+file_patcher_apply_patch() {
+  printf 'patch-apply:%s\n' "$1" >> "$VESPERA_ROOT/install.log"
+}
+sdi_add_service_mapping() {
+  printf 'serial-map-add:%s\n' "$DEVICE_SERVICE_NAME" >> "$VESPERA_ROOT/install.log"
+}
+addsource() {
+  case "$1" in
+    libs/serial-device-installer-lib)
+      source "${VESPERA_ROOT}/data/apps/available/vespera/libs/serial-device-installer-lib" ;;
+    libs/file-patcher-lib)
+      source "${VESPERA_ROOT}/data/apps/available/vespera/libs/file-patcher-lib" ;;
+    libs/file-lib)
+      source "${VESPERA_ROOT}/data/apps/available/vespera/libs/file-lib" ;;
+  esac
+}
+__try_call() {
+  local fn="$1"
+  shift || true
+  if declare -F "$fn" >/dev/null; then
+    "$fn" "$@"
+  fi
+}
+EOF
+  chmod +x "$TEST_ROOT/data/apps/available/vespera/libs/installer-lib"
+
+  cat > "$TEST_ROOT/data/apps/available/vespera/libs/serial-device-installer-lib" <<'EOF'
+#!/usr/bin/env bash
+sdi_add_service_mapping() {
+  printf 'serial-map-add:%s\n' "$DEVICE_SERVICE_NAME" >> "$VESPERA_ROOT/install.log"
+}
+EOF
+
+  cat > "$TEST_ROOT/data/apps/available/vespera/libs/file-patcher-lib" <<'EOF'
+#!/usr/bin/env bash
+file_patcher_apply_patch() {
+  printf 'patch-apply:%s\n' "$1" >> "$VESPERA_ROOT/install.log"
+}
+EOF
+
+  cat > "$TEST_ROOT/data/apps/available/vespera/libs/file-lib" <<'EOF'
+#!/usr/bin/env bash
+file_lib_append_content_to_file() { :; }
+EOF
+
+  cat > "$TEST_ROOT/data/apps/available/demo/demo.installer" <<'EOF'
+firmware_changed() {
+  printf '%s\n' 'installer-firmware-changed' >> "$VESPERA_ROOT/install.log"
+}
+EOF
+
+  cat > "$TEST_ROOT/data/apps/available/demo/demo.installer-main-patch" <<'EOF'
+@openfile
+====
+/opt/victronenergy/gui/qml/Demo.qml
+====
+EOF
+
+  : > "$TEST_ROOT/install.log"
+}
+
+cleanup_install_runtime() {
+  [[ -n "${TEST_ROOT:-}" ]] && vt_safe_rm_rf "$TEST_ROOT"
+}
+
+test_install_script_registers_services_and_updates_install_state() {
+  stage_install_runtime
+
+  VESPERA_ROOT="$TEST_ROOT" \
+    bash "$TEST_ROOT/data/apps/available/vespera/scripts/install" \
+    install "$TEST_ROOT/data/apps/available/demo/demo.installer" "$TEST_ROOT/work" 0
+
+  assert_exitcode 0 "install action exits successfully"
+  assert_file_contains "$TEST_ROOT/data/var/vespera/info/demo.dbus-name" 'com.example.demo' "install writes package dbus name file"
+  assert_file_contains "$TEST_ROOT/work/install-state" 'demo enabled' "install marks package enabled in install-state"
+  assert_file_contains "$TEST_ROOT/data/var/vespera/info/demo.app-services" 'svc-a' "install records app runtime services"
+  assert_file_contains "$TEST_ROOT/data/var/vespera/info/demo.app-template-services" 'tpl-a' "install records template services"
+  assert_file_contains "$TEST_ROOT/install.log" 'manifest:' "install builds dbus manifest"
+  assert_file_contains "$TEST_ROOT/install.log" 'install-dbus:' "install applies dbus settings"
+  assert_file_contains "$TEST_ROOT/install.log" 'serial-map-add:tpl-a' "install registers serial mapping for template service"
+  assert_file_exists "$TEST_ROOT/data/apps/available/demo/conf/demo.conf" "install moves default conf into conf directory"
+
+  cleanup_install_runtime
+}
+
+test_install_script_firmware_changed_applies_patches_and_calls_hook() {
+  stage_install_runtime
+
+  VESPERA_ROOT="$TEST_ROOT" \
+    bash "$TEST_ROOT/data/apps/available/vespera/scripts/install" \
+    firmware-changed "$TEST_ROOT/data/apps/available/demo/demo.installer" "$TEST_ROOT/work" 0
+
+  assert_exitcode 0 "firmware-changed action exits successfully"
+  assert_file_contains "$TEST_ROOT/install.log" 'patch-apply:' "firmware-changed applies patch files"
+  assert_file_contains "$TEST_ROOT/install.log" 'installer-firmware-changed' "firmware-changed calls installer hook"
+  assert_file_not_contain "$TEST_ROOT/install.log" 'install-dbus:' "firmware-changed does not run dbus install phase"
+  assert_file_not_contain "$TEST_ROOT/install.log" 'serial-map-add:' "firmware-changed does not register serial mappings"
+
+  cleanup_install_runtime
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

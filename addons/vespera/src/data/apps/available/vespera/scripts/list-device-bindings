@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+
+declare dbus_name="${1}"
+[[ -z $dbus_name ]] && exit 0
+
+exec dbus -y com.victronenergy.settings /Settings/Devices GetValue 2>/dev/null |
+	grep -E "'sid_[^']+/DeviceKey': '$dbus_name'" |
+	sed -E "s/^.*'sid_([^']+)\\/DeviceKey': '$dbus_name'.*$/\1/"

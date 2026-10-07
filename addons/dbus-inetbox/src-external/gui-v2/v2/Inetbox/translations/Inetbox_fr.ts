@@ -100,92 +100,92 @@
         <translation>El2</translation>
     </message>
     <message id="inetbox_connected">
-        <location filename="../InetboxDevicePage.qml" line="42"/>
+        <location filename="../InetboxDevicePage.qml" line="17"/>
         <source>Connected</source>
         <translation>Connecté</translation>
     </message>
     <message id="inetbox_room_current_temperature">
-        <location filename="../InetboxDevicePage.qml" line="49"/>
+        <location filename="../InetboxDevicePage.qml" line="24"/>
         <source>Current Room Temperature</source>
         <translation>Température actuelle de la pièce</translation>
     </message>
     <message id="inetbox_room_target_temperature">
-        <location filename="../InetboxDevicePage.qml" line="56"/>
+        <location filename="../InetboxDevicePage.qml" line="31"/>
         <source>Target Room Temperature</source>
         <translation>Température cible de la pièce</translation>
     </message>
     <message id="inetbox_water_current_temperature">
-        <location filename="../InetboxDevicePage.qml" line="63"/>
+        <location filename="../InetboxDevicePage.qml" line="38"/>
         <source>Current Water Temperature</source>
         <translation>Température actuelle de l’eau</translation>
     </message>
     <message id="inetbox_energy_water">
-        <location filename="../InetboxDevicePage.qml" line="69"/>
-        <location filename="../components/MotorhomeInetbox.qml" line="152"/>
+        <location filename="../InetboxDevicePage.qml" line="44"/>
+        <location filename="../components/MotorhomeInetbox.qml" line="151"/>
         <source>Water</source>
         <translation>Eau</translation>
     </message>
     <message id="inetbox_energy_heating">
-        <location filename="../InetboxDevicePage.qml" line="76"/>
-        <location filename="../components/MotorhomeInetbox.qml" line="172"/>
+        <location filename="../InetboxDevicePage.qml" line="51"/>
+        <location filename="../components/MotorhomeInetbox.qml" line="171"/>
         <source>Heating</source>
         <translation>Chauffage</translation>
     </message>
     <message id="inetbox_energy_aircon">
-        <location filename="../InetboxDevicePage.qml" line="82"/>
-        <location filename="../components/MotorhomeInetbox.qml" line="186"/>
+        <location filename="../InetboxDevicePage.qml" line="57"/>
+        <location filename="../components/MotorhomeInetbox.qml" line="185"/>
         <source>Aircon</source>
         <translation>Climatisation</translation>
     </message>
     <message id="inetbox_energy_fan_speed">
-        <location filename="../InetboxDevicePage.qml" line="90"/>
-        <location filename="../components/MotorhomeInetbox.qml" line="219"/>
+        <location filename="../InetboxDevicePage.qml" line="65"/>
+        <location filename="../components/MotorhomeInetbox.qml" line="218"/>
         <source>Fan speed</source>
         <translation>Vitesse du ventilateur</translation>
     </message>
     <message id="inetbox_show_aircon">
-        <location filename="../InetboxDevicePage.qml" line="114"/>
+        <location filename="../InetboxDevicePage.qml" line="89"/>
         <source>Show aircon</source>
         <translation>Afficher la climatisation</translation>
     </message>
     <message id="inetbox_settings">
-        <location filename="../InetboxPageSettings.qml" line="9"/>
+        <location filename="../InetboxPageSettings.qml" line="7"/>
         <source>Inetbox settings</source>
         <translation>Paramètres Inetbox</translation>
     </message>
     <message id="inetbox_show_motorhome_page">
-        <location filename="../InetboxPageSettings.qml" line="27"/>
+        <location filename="../InetboxPageSettings.qml" line="28"/>
         <source>Show Motorhome Page</source>
         <translation>Afficher la page camping-car</translation>
     </message>
-    <message id="opkg_version">
-        <location filename="../InetboxPageSettings.qml" line="35"/>
+    <message id="vespera_version">
+        <location filename="../InetboxPageSettings.qml" line="46"/>
         <source></source>
-        <translation></translation>
+        <translation type="unfinished"></translation>
     </message>
     <message id="pagecontrollableloads_documentation">
-        <location filename="../InetboxPageSettings.qml" line="43"/>
+        <location filename="../InetboxPageSettings.qml" line="54"/>
         <source>Documentation</source>
         <translation>Documentation</translation>
     </message>
     <message id="inetbox_no_device_found">
-        <location filename="../components/MotorhomeInetbox.qml" line="26"/>
+        <location filename="../components/MotorhomeInetbox.qml" line="25"/>
         <source>No Inetbox device found</source>
         <translation>Aucun appareil Inetbox trouvé</translation>
     </message>
     <message id="inetbox_click_to_install_device">
-        <location filename="../components/MotorhomeInetbox.qml" line="33"/>
+        <location filename="../components/MotorhomeInetbox.qml" line="32"/>
         <source>Click to install device</source>
         <translation>Cliquez pour installer l’appareil</translation>
     </message>
     <message id="inetbox_error_code">
-        <location filename="../components/MotorhomeInetbox.qml" line="67"/>
+        <location filename="../components/MotorhomeInetbox.qml" line="66"/>
         <source>Error Code: %1</source>
         <extracomment>%1 = error code</extracomment>
         <translation>Code d’erreur : %1</translation>
     </message>
     <message id="inetbox_energy_mix">
-        <location filename="../components/MotorhomeInetbox.qml" line="230"/>
+        <location filename="../components/MotorhomeInetbox.qml" line="229"/>
         <source>Energy Mix</source>
         <translation>Mix énergétique</translation>
     </message>

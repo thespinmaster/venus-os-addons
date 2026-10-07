@@ -1,0 +1,39 @@
+#!/bin/bash
+
+set -euo pipefail
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+workspace_root="$(readlink -f "${this_path}/..")"
+
+current_file="${1:-}"
+test_function_filter="${2:-^test_.*}"
+
+if [[ -z "$current_file" ]]; then
+	echo "Usage: $0 <current-file> [regex-filter]" >&2
+	exit 1
+fi
+
+current_file="$(readlink -f "$current_file")"
+
+if [[ "$current_file" == "$workspace_root/addons/vespera/tests/"* ]]; then
+	test_file="$current_file"
+elif [[ "$current_file" == "$workspace_root/addons/vespera/src/CONTROL/"* ]]; then
+	test_name="control-$(basename "$current_file")-tests"
+	test_file="$workspace_root/addons/vespera/tests/$test_name"
+elif [[ "$current_file" == "$workspace_root/addons/vespera/src/data/apps/available/vespera/scripts/"* ]]; then
+	test_name="$(basename "$current_file")-tests"
+	test_file="$workspace_root/addons/vespera/tests/$test_name"
+elif [[ "$current_file" == "$workspace_root/addons/vespera/src/data/apps/available/vespera/libs/"* ]]; then
+	test_name="$(basename "$current_file")-tests"
+	test_file="$workspace_root/addons/vespera/tests/$test_name"
+else
+	echo "No current-file test mapping for: $current_file" >&2
+	exit 1
+fi
+
+if [[ ! -f "$test_file" ]]; then
+	echo "Mapped test file does not exist: $test_file" >&2
+	exit 1
+fi
+
+exec "$this_path/run-current-tests" "$test_file" "$test_function_filter"

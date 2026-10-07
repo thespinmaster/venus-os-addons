@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_root="$this_path/../src/data/apps/available/vespera"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+
+TEST_ROOT=
+TEST_APP_ROOT=
+TEST_DATA_DIR=
+
+stage_exec_startup_runtime() {
+  TEST_ROOT="$(vt_make_test_root)"
+  TEST_APP_ROOT="$TEST_ROOT/data/apps/available/vespera"
+  TEST_DATA_DIR="$TEST_ROOT/data/var/vespera"
+
+  mkdir -p "$TEST_APP_ROOT/scripts" "$TEST_APP_ROOT/conf" "$TEST_DATA_DIR/info" "$TEST_ROOT/data/apps/enabled" "$TEST_ROOT/data/apps/available/appA" "$TEST_ROOT/data/apps/available/appB"
+
+  cp "$source_root/conf-default/vespera.conf" "$TEST_APP_ROOT/conf/vespera.conf"
+  cp "$source_root/scripts/execute-startup-scripts" "$TEST_APP_ROOT/scripts/execute-startup-scripts"
+  chmod +x "$TEST_APP_ROOT/scripts/execute-startup-scripts"
+
+  cat > "$TEST_APP_ROOT/conf/vespera.conf" <<EOF
+#!/usr/bin/env bash
+VESPERA_DATA_DIR="/data/var/vespera"
+EOF
+
+  cat > "$TEST_DATA_DIR/info/appA.rcS-20-local" <<EOF
+printf '%s\n' 'A' >> "$TEST_ROOT/startup-order.log"
+EOF
+
+  cat > "$TEST_DATA_DIR/info/appB.rcS-10-local" <<EOF
+printf '%s\n' 'B' >> "$TEST_ROOT/startup-order.log"
+EOF
+
+  cat > "$TEST_DATA_DIR/info/appC.rcS-30-local" <<EOF
+printf '%s\n' 'C' >> "$TEST_ROOT/startup-order.log"
+EOF
+
+  : > "$TEST_ROOT/startup-order.log"
+
+  # appC intentionally not enabled
+  ln -s "$TEST_ROOT/data/apps/available/appA" "$TEST_ROOT/data/apps/enabled/appA"
+  ln -s "$TEST_ROOT/data/apps/available/appB" "$TEST_ROOT/data/apps/enabled/appB"
+}
+
+cleanup_exec_startup_runtime() {
+  [[ -n "${TEST_ROOT:-}" ]] && vt_safe_rm_rf "$TEST_ROOT"
+}
+
+test_execute_startup_scripts_runs_enabled_apps_in_numeric_order() {
+  stage_exec_startup_runtime
+
+  local output
+  output="$(VESPERA_ROOT="$TEST_ROOT" bash "$TEST_APP_ROOT/scripts/execute-startup-scripts" rcS.local)"
+
+  assert_exitcode 0
+  assert_eq $'B\nA' "$(cat "$TEST_ROOT/startup-order.log")"
+  assert_contains 'App not enabled skipping:' "$output"
+
+  cleanup_exec_startup_runtime
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

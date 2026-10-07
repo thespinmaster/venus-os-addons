@@ -8,4 +8,4 @@ License: MIT
 Architecture: all
 OE: mount-shares
 Source: https://thespinmaster.github.io/venus-os-addons
-Depends: opkg-manager
+

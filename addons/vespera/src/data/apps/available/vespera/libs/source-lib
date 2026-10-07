@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+[[ -n "${__SOURCE_LIB_SOURCED:-}" ]] && return 0
+
+# mark ourselfs as alreaded sourced
+__SOURCE_LIB_SOURCED=1
+
+addsource() {
+
+  local file="${1}"
+	local option="${2:-}"
+  local guard_var="__${file//[^a-zA-Z0-9_]/_}_SOURCED"
+  shift 1
+
+  [[ -n "${!guard_var:-}" ]] && return 0;
+
+  # Mark this file as loaded only if source succeeds; failed loads can retry later.
+	# printf sets the guard_var to 1 ;-)
+
+	local this_path; this_path="$(dirname "${BASH_SOURCE[0]}")"
+	local vespera_dir=
+	[[ $option != "root-path" ]] &&
+		vespera_dir="$(cd "${this_path}/.." && pwd)/"
+
+	# shellcheck disable=SC1090
+	source "$vespera_dir${file}" \
+    && printf -v "$guard_var" '%s' 1
+
+}
+
+source_lib_clear_source_guards() {
+	local var
+	while IFS= read -r var; do
+		unset "$var"
+	done < <(compgen -A variable | grep '^__.*_SOURCED$')
+}

@@ -1,7 +1,7 @@
 {
 	"folders": [
 		{
-			"path": "/data/dev/addons/opkg-manager"
+			"path": "/data/dev/addons/vespera"
 		},
 		{
 			"path": "/data/dev/addons/dbus-inetbox"
@@ -15,6 +15,7 @@
 		{
 			"path": "/home/admin_user/dev-local"
 		}
+
 	],
 	"settings": {
 		"workbench.editor.enablePreview": true,
@@ -46,6 +47,12 @@
 		"qt-qml.qmlls.additionalImportPaths": [
 			"/home/admin_user/dev-local/gui-v2/build-wasm"
 		],
+		"chat.tools.terminal.autoApprove": {
+			"/^cd /data/dev/tasks && set -e; pkg_root=\"\\.\\./addons/vespera\"; build_path=\"\\.\\./\\.build/vespera\\.nocpp\\.\\$\\$\\.\\$RANDOM\"; feed_path=\"\\.\\./feeds/develop/vespera\"; mkdir -p \"\\$feed_path\"; src_path=\"\\$pkg_root/src\"; rel_src_path=\"\\$\\{src_path#\\./\\}\"; rel_src_path=\"\\$\\{rel_src_path#/\\}\"; dest_path=\"\\$build_path/\\$rel_src_path\"; echo \"== rsync ==\"; /usr/bin/time -v bash -c 'cd /data/dev/tasks && rsync -a --mkpath \\.\\./addons/vespera/src/ \\.\\./\\.build/vespera\\.nocpp\\.\\$\\$\\.\\$RANDOM/\\.\\./addons/vespera/src/ --exclude=\\*\\.bak --exclude=\\.git --exclude=\\*\\.tmp --exclude=tests/ --exclude=\\*\\.old --exclude=\\.venv/ --exclude=\"__pycache__/\"' 2>&1 \\| tail -n 40; echo \"== opkg-build ==\"; /usr/bin/time -v bash -c 'cd /data/dev/tasks && build_path=\"\\.\\./\\.build/vespera\\.nocpp\\.\\$\\$\\.\\$RANDOM\"; rel_src_path=\"addons/vespera/src\"; develop_path=\"\\$build_path/\\$rel_src_path\"; if \\[ ! -d \"\\$develop_path/CONTROL\" \\]; then echo \"missing control\"; exit 1; fi; sed -i \"s/\\^\\\\\\(Version:\\.\\*\\\\\\)\\$/\\\\1~d261003\\.0000/\" \"\\$develop_path/CONTROL/control\"; mkdir -p \"\\$develop_path/data/apps/available/vespera\"; echo \"\\$\\(date\\)\" > \"\\$develop_path/data/apps/available/vespera/buildtime\"; opkg-build -o root -g root \"\\$develop_path/\" \\.\\./feeds/develop/vespera' 2>&1 \\| tail -n 50$/": {
+				"approve": true,
+				"matchCommandLine": true
+			}
+		},
 	}
 
 

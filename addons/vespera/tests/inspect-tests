@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_root="$this_path/../src/data/apps/available/vespera"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+
+TEST_ROOT=
+TEST_APP_ROOT=
+TEST_DATA_DIR=
+
+stage_inspect_runtime() {
+  TEST_ROOT="$(vt_make_test_root)"
+  TEST_APP_ROOT="$TEST_ROOT/app/vespera"
+  TEST_DATA_DIR="$TEST_ROOT/data/var/vespera"
+
+  mkdir -p "$TEST_APP_ROOT/scripts" "$TEST_APP_ROOT/conf" "$TEST_DATA_DIR/info"
+
+  cp "$source_root/scripts/inspect" "$TEST_APP_ROOT/scripts/inspect"
+  chmod +x "$TEST_APP_ROOT/scripts/inspect"
+
+  cat > "$TEST_APP_ROOT/conf/vespera.conf" <<EOF
+#!/usr/bin/env bash
+VESPERA_DATA_DIR="$TEST_DATA_DIR"
+VESPERA_OVERLAYS_FILE="installer-overlays"
+VESPERA_APP_SERVICES_FILE="installer-services"
+VESPERA_APP_TEMPLATE_SERVICES_FILE="installer-template-services"
+VESPERA_DBUS_NAME="dbus-name"
+EOF
+
+  cat > "$TEST_APP_ROOT/scripts/list-device-bindings" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' '1234'
+EOF
+  chmod +x "$TEST_APP_ROOT/scripts/list-device-bindings"
+
+  cat > "$TEST_DATA_DIR/info/vespera.overlay-lib" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "overlay-list-mounts" ]]; then
+  printf '%s\n' '/overlay/demo mounted'
+fi
+EOF
+  chmod +x "$TEST_DATA_DIR/info/vespera.overlay-lib"
+
+  cat > "$TEST_DATA_DIR/info/demo.installer-services" <<'EOF'
+service.demo
+EOF
+
+  cat > "$TEST_DATA_DIR/info/demo.installer-template-services" <<'EOF'
+template.demo
+EOF
+
+  cat > "$TEST_DATA_DIR/info/demo.dbus-name" <<'EOF'
+com.example.demo
+EOF
+
+  cat > "$TEST_DATA_DIR/info/other.installer-services" <<'EOF'
+service.other
+EOF
+
+  cat > "$TEST_DATA_DIR/info/other.installer-template-services" <<'EOF'
+template.other
+EOF
+
+  cat > "$TEST_DATA_DIR/info/other.dbus-name" <<'EOF'
+com.example.other
+EOF
+}
+
+cleanup_inspect_runtime() {
+  if [[ -n "${TEST_ROOT:-}" ]]; then
+    vt_safe_rm_rf "$TEST_ROOT"
+  fi
+}
+
+opkg_lib_list_packages() {
+  if [[ "${1:-}" == "all" ]]; then
+    printf '%s\n' 'demo' 'other'
+    return 0
+  fi
+  printf '%s\n' 'demo'
+}
+
+svstat() {
+  printf 'up (pid 1001) 10 seconds\n'
+}
+
+dbus() {
+  if [[ "${1:-}" == "-y" ]] && [[ "$#" -eq 1 ]]; then
+    printf '%s\n' 'com.example.demo' 'com.example.template.demo.ttyUSB0' 'com.victronenergy.settings'
+    return 0
+  fi
+
+  if [[ "${1:-}" == "-y" ]] && [[ "${2:-}" == "com.victronenergy.settings" ]] && [[ "${3:-}" == "/Settings/Vespera" ]]; then
+    printf '%s\n' '{ "com.example.demo": 1, }'
+    return 0
+  fi
+
+  if [[ "${1:-}" == "-y" ]] && [[ "${2:-}" == "com.victronenergy.settings" ]] && [[ "${3:-}" == "/Settings/Devices/sid_1234" ]]; then
+    printf '%s\n' '{ "Port": "ttyUSB0", }'
+    return 0
+  fi
+
+  if [[ "${1:-}" == "-y" ]]; then
+    printf '%s\n' '{ "State": "ok", }'
+    return 0
+  fi
+
+  return 1
+}
+
+test_inspect_reports_services_dbus_and_overlays_for_app() {
+  stage_inspect_runtime
+
+  local output
+  output="$( ( . "$TEST_APP_ROOT/scripts/inspect" demo ) 2>&1 )"
+
+  assert_exitcode 0
+  assert_contains 'demo - not enabled' "$output"
+  assert_contains 'Services' "$output"
+  assert_contains 'Dbus Services' "$output"
+  assert_contains '/Settings/Devices/sid_1234' "$output"
+  assert_contains 'Overlays' "$output"
+  assert_contains '/overlay/demo mounted' "$output"
+
+  cleanup_inspect_runtime
+}
+
+test_inspect_filters_details_to_requested_app() {
+  stage_inspect_runtime
+
+  local output
+  output="$( ( . "$TEST_APP_ROOT/scripts/inspect" demo ) 2>&1 )"
+
+  assert_exitcode 0
+  assert_contains 'demo - not enabled' "$output"
+  [[ "$output" != *'other - not enabled'* ]]
+  assert_result "$?" "Output does not include non-target app details"
+
+  cleanup_inspect_runtime
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

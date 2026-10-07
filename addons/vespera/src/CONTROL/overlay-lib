@@ -1,0 +1,373 @@
+#!/bin/bash
+
+# /data/vespera/overlay-lib
+# Core overlay management functions for Vespera
+#
+# Behavior summary:
+# - One app can register multiple target paths.
+# - Multiple apps can register the same target path.
+# - A shared target uses one runtime overlay mount keyed by target path.
+# - Overlay precedence is "last registered wins" for conflicting files.
+# - Unregister remounts shared targets and only fully unmounts when no apps remain.
+# - Runtime directories are always prepared as:
+#   /data/apps/available/vespera/overlays/<target-id>/{kernel-work,upper,merged}
+#
+# Config format (OVERLAY_CONF_FILE):
+#   app_name|<target>
+
+OVERLAY_BASE_DIR="/data/var/vespera/overlays"
+OVERLAY_CONF_FILE="${OVERLAY_BASE_DIR}/overlays.conf"
+OVERLAY_WORK_DIRNAME="kernel-work" #use kernel-work; will produce kernel-work/work
+OVERLAY_UPPER_DIRNAME="upper"
+OVERLAY_MERGED_DIRNAME="merged"
+
+# Ensure base runtime directories exist
+__overlay_lib_init() {
+	[[ -f "$OVERLAY_CONF_FILE" ]] && return 0
+
+	mkdir -p "$OVERLAY_BASE_DIR"
+	touch "$OVERLAY_CONF_FILE"
+}
+
+__overlay_lib_get_runtime_dir() {
+	local target_path="$1"
+	local mount_id; mount_id="$(echo "$target_path" | tr '/' '_')"
+	echo "${OVERLAY_BASE_DIR}/${mount_id}"
+}
+
+# Return success when any app still references the target path in the registration state.
+__overlay_lib_target_in_use() {
+	local target_path="$1"
+	local name="" target=""
+
+	[[ ! -f "$OVERLAY_CONF_FILE" ]] && return 1
+
+	while IFS='|' read -r name target; do
+		[[ "$name" =~ ^[[:space:]]*(#|$) ]] && continue # skip comments and whitespace
+		[[ -z "$target" ]] && continue
+		[[ "$target" != "$target_path" ]] && continue
+		return 0
+	done < "$OVERLAY_CONF_FILE"
+
+	return 1
+}
+
+__overlay_lib_prepare_target_dirs() {
+	local target_path="$1"
+	local mount_runtime_dir; mount_runtime_dir=$(__overlay_lib_get_runtime_dir "$target_path")
+	local work_dir="${mount_runtime_dir}/${OVERLAY_WORK_DIRNAME}"
+	local upper_dir="${mount_runtime_dir}/${OVERLAY_UPPER_DIRNAME}"
+	local merged_dir="${mount_runtime_dir}/${OVERLAY_MERGED_DIRNAME}"
+
+	mkdir -p "$work_dir" "$upper_dir" "$merged_dir"
+}
+
+__overlay_lib_list_contains() {
+	local value="$1"
+	local file="$2"
+
+	grep -F -x "$value" "$file" >/dev/null
+}
+
+__overlay_lib_list_all_upper_entries() {
+	local overlay_target type
+	local relative_path real_path
+
+	[[ ! -f "$OVERLAY_CONF_FILE" ]] && return 0
+
+	while IFS='|' read -r _ target; do
+		case "$target" in ''|[[:space:]]*|[[:space:]]#*) continue;; esac # skip whitespace and comments
+		overlay_target="$(__overlay_lib_get_runtime_dir "$target")/${OVERLAY_UPPER_DIRNAME}"
+		[[ -d "$overlay_target" ]] || continue
+
+		find "$overlay_target" ! -type d |
+			while IFS= read -r upper_path; do
+				relative_path="${upper_path#"$overlay_target"}"
+				real_path="${target%/}${relative_path}"
+				[[ -c "$upper_path" ]] && type=W || type=F
+				echo "$type|$real_path|$upper_path"
+			done
+	done < "$OVERLAY_CONF_FILE"
+}
+
+overlay_lib_reconcile() {
+	local owned_files="$1"
+	local whiteouts="$2"
+	local reconcile_dir overlay_entries
+	local type path upper_path overlay_target
+
+	[[ ! -f "$owned_files" ]] && return 1
+	[[ ! -f "$whiteouts" ]] && return 1
+
+	reconcile_dir="$(mktemp -d)" || return 1
+	overlay_entries="$reconcile_dir/entries"
+
+	__overlay_lib_list_all_upper_entries > "$overlay_entries"
+
+	while IFS='|' read -r type path upper_path; do
+		case "$type" in
+			F)
+				__overlay_lib_list_contains "$path" "$owned_files" && continue
+				rm -f "$upper_path"
+				;;
+			W)
+				__overlay_lib_list_contains "$path" "$whiteouts" && continue
+				rm -f "$upper_path"
+				;;
+		esac
+	done < "$overlay_entries"
+
+	# Remove empty directories left behind after deleting stale upper entries.
+	while IFS='|' read -r _ target; do
+		[[ "$_" =~ ^[[:space:]]*(#|$) ]] && continue # skip comments and whitespace
+		overlay_target="$(__overlay_lib_get_runtime_dir "$target")/${OVERLAY_UPPER_DIRNAME}"
+
+		find "$overlay_target" -depth -type d -empty |
+		while IFS= read -r path; do
+			rmdir "$path"
+		done
+	done < "$OVERLAY_CONF_FILE"
+
+	rm -rf "$reconcile_dir"
+}
+
+# Guard against unstable targets (e.g. tmpfs mountpoints like /service).
+__overlay_lib_target_supported() {
+	local target_path="$1"
+	local target_fs_type
+
+	[[ ! -d "$target_path" ]] && {
+		echo "ERROR: overlay_lib_target_supported: target does not exist: $target_path"
+		return 1
+	}
+
+	target_fs_type="$(stat -f -c %T "$target_path" 2>/dev/null)"
+	[[ "$target_fs_type" == "tmpfs" ]] && {
+		echo "ERROR: overlay_lib_target_supported: tmpfs targets are not supported: $target_path"
+		return 1
+	}
+
+	return 0
+}
+
+__overlay_lib_unmount_target() {
+	local target_path="$1"
+	local mount_runtime_dir; mount_runtime_dir=$(__overlay_lib_get_runtime_dir "$target_path")
+	local merged_dir="${mount_runtime_dir}/${OVERLAY_MERGED_DIRNAME}"
+
+	# Prefer clean unmount first, then fall back to lazy detach when busy.
+	if mountpoint -q "$target_path"; then
+		umount "$target_path" 2>/dev/null || umount -l "$target_path" 2>/dev/null
+	fi
+	if mountpoint -q "$merged_dir"; then
+		umount "$merged_dir" 2>/dev/null || umount -l "$merged_dir" 2>/dev/null
+	fi
+}
+
+__overlay_lib_unmount_orphan_runtime_mounts() {
+	local merged_mount
+
+	awk '$3 == "overlay" { print $2 }' /proc/self/mounts |
+	while IFS= read -r merged_mount; do
+		[[ "$merged_mount" == "$OVERLAY_BASE_DIR"/*"/${OVERLAY_MERGED_DIRNAME}" ]] || continue
+		umount "$merged_mount" 2>/dev/null || umount -l "$merged_mount" 2>/dev/null
+	done
+}
+
+__overlay_lib_cleanup_target_dirs() {
+	local target_path="${1}"
+	local mount_runtime_dir
+	mount_runtime_dir=$(__overlay_lib_get_runtime_dir "$target_path")
+	local upper_dir="${mount_runtime_dir}/${OVERLAY_UPPER_DIRNAME}"
+	local work_dir="${mount_runtime_dir}/${OVERLAY_WORK_DIRNAME}"
+	local merged_dir="${mount_runtime_dir}/${OVERLAY_MERGED_DIRNAME}"
+
+	# Do not touch runtime directories while either mountpoint is still active.
+	if mountpoint -q "$target_path" || mountpoint -q "$merged_dir"; then
+		return 1
+	fi
+
+	# Default cleanup: keep upper content, but prune empty runtime dirs.
+	# use rm on kernel-work/work to delete left behind
+	rm -rf "${work_dir}/work" 2>/dev/null
+	rmdir "$work_dir" "$merged_dir" "${mount_runtime_dir}" "$upper_dir" 2>/dev/null || true
+
+}
+
+# Mount/rebuild a shared target mount from current registrations.
+# lowerdir order is built so the newest registration has highest precedence.
+__overlay_lib_mount_target() {
+	local target_path="$1"
+
+	# Rebuild the managed overlay from the current registration state.
+	# A managed target is allowed to be mounted while we refresh it; the mounted-path
+	# validation is only for new registrations, not for remount/rebuild operations.
+	__overlay_lib_unmount_target "$target_path"
+	__overlay_lib_target_in_use "$target_path" || return 0
+	__overlay_lib_prepare_target_dirs "$target_path"
+
+	local mount_runtime_dir
+	mount_runtime_dir=$(__overlay_lib_get_runtime_dir "$target_path")
+	local work_dir="${mount_runtime_dir}/${OVERLAY_WORK_DIRNAME}"
+	local upper_dir="${mount_runtime_dir}/${OVERLAY_UPPER_DIRNAME}"
+	local merged_dir="${mount_runtime_dir}/${OVERLAY_MERGED_DIRNAME}"
+	local lowerdirs="$target_path"
+
+	rm -rf "$work_dir"
+	mkdir -p "$work_dir" "$merged_dir"
+
+	# 1. Mount OverlayFS to intermediate directory
+	mount -t overlay overlay \
+		-o "index=off,lowerdir=$lowerdirs,upperdir=$upper_dir,workdir=$work_dir" \
+		"$merged_dir" #2>/dev/null
+
+	# 2. Bind-mount merged layer onto actual system target
+	if [[ $? -eq 0 ]]; then
+		mount --bind "$merged_dir" "$target_path"
+	fi
+}
+
+# Register all requested target overlays for one app and apply mounts immediately.
+# Existing entries for the same app are removed first so registration order is refreshed.
+# Reads target paths from a config file and ignores comments and empty lines.
+# Registrations persist only app_name|target; the overlay tree itself is derived from them.
+overlay_lib_register() {
+	local app_name="$1"
+	local mount_point
+	local line
+
+	# Unregister existing entries to clean state first (note: removes conf file if empty)
+	overlay_lib_unregister "$app_name"
+
+	__overlay_lib_init
+
+	[[ ! -f "$OVERLAY_CONF_FILE" ]] && { echo "ERROR: conf file not found:$OVERLAY_CONF_FILE"; return 1; }
+
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		[[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
+		mount_point="$line"
+
+		if ! __overlay_lib_target_in_use "$mount_point"; then
+			__overlay_lib_target_supported "$mount_point" || continue
+		fi
+		echo "${app_name}|${mount_point}" >> "$OVERLAY_CONF_FILE"
+		__overlay_lib_mount_target "$mount_point"
+	done
+}
+
+overlay_lib_unregister() {
+	local app_name="${1:-}"
+	local tmp_conf
+	local target=""
+
+	[[ ! -f "$OVERLAY_CONF_FILE" ]] && return 0
+
+	tmp_conf="$(mktemp)"
+	if [[ -n "${app_name}" ]]; then
+		awk -F'|' -v app="$app_name" '$1 == app { print $2 }' "$OVERLAY_CONF_FILE" | sort -u > "$tmp_conf"
+		awk -F'|' -v app="$app_name" '$1 != app { print $0 }' "$OVERLAY_CONF_FILE" > "${OVERLAY_CONF_FILE}.tmp" && mv "${OVERLAY_CONF_FILE}.tmp" "$OVERLAY_CONF_FILE"
+	else
+		awk -F'|' '{ print $2 }' "$OVERLAY_CONF_FILE" | sort -u > "$tmp_conf"
+		: > "$OVERLAY_CONF_FILE"
+	fi
+
+	while IFS= read -r target; do
+		[[ "$target" =~ ^[[:space:]]*(#|$) ]] && continue # skip comments and whitespace
+		if [[ -n "${app_name}" ]]; then
+			[[ -z "$target" ]] && continue
+			if __overlay_lib_target_in_use "$target"; then
+				continue
+			fi
+		fi
+
+		__overlay_lib_unmount_target "$target"
+		__overlay_lib_cleanup_target_dirs "$target"
+
+	done < "$tmp_conf"
+
+	# Safety net: when unregistering all, also drop any orphan merged mounts
+	# that may remain even after the registration file has been cleared.
+	[[ -z "${app_name}" ]] && __overlay_lib_unmount_orphan_runtime_mounts
+
+	# if overlay.conf file is empty remove
+	# then remove overlay base dir
+	if [[ ! -s "$OVERLAY_CONF_FILE" ]]; then
+		rm -f "$OVERLAY_CONF_FILE"
+		rmdir "$OVERLAY_BASE_DIR" 2>/dev/null || true
+	fi
+
+	rm -f "$tmp_conf"
+}
+
+overlay_lib_get_upper_directories() {
+	local file="${1}"
+	while IFS='|' read -r target; do
+		[[ "$target" =~ ^[[:space:]]*(#|$) ]] && continue # skip comments and whitespace
+
+		upper_dir="$(__overlay_lib_get_runtime_dir "$target")/${OVERLAY_UPPER_DIRNAME}"
+		echo "$target=$upper_dir"
+	done < "$file"
+}
+
+__overlay_lib_mount_unmount() {
+	local action="${1}"
+	shift
+	__overlay_lib_init
+
+	[[ ! -f "$OVERLAY_CONF_FILE" ]] && return 0
+
+	while IFS='|' read -r app_name target_path; do
+		[[ "$app_name" =~ ^[[:space:]]*(#|$) ]] && continue # skip comments and whitespace
+
+		__no_args_or_has_matched_arg "$app_name" "$@" || continue
+
+		if [[ $action == "mount" ]]; then
+			__overlay_lib_mount_target "$target_path"
+		elif [[ $action == "unmount" ]]; then
+			__overlay_lib_unmount_target "$target_path"
+		fi
+	done < "$OVERLAY_CONF_FILE"
+}
+
+__no_args_or_has_matched_arg() {
+	(($#==1)) && return 0
+
+	local match="$1"
+	shift
+
+	for arg in "$@"; do
+		[[ "$arg" == "$match" ]] && return 0
+	done
+
+	return 1
+}
+
+overlay_list_mounts() {
+	local overlay_file="${1}"
+	local runtime_dir
+	while IFS='|' read -r target; do
+		[[ "$target" =~ ^[[:space:]]*(#|$) ]] && continue # skip comments and whitespace
+		runtime_dir="$(__overlay_lib_get_runtime_dir "$target")/${OVERLAY_MERGED_DIRNAME}"
+		mountpoint -q "$target" && mountpoint -q "$runtime_dir" \
+			&& echo "overlay: $target (mounted)" \
+			|| echo "overlay: $target (not mounted)"
+	done < "$overlay_file"
+}
+
+case "${1:-}" in
+	overlay-unregister)
+		overlay_lib_unregister "${2-}";;
+	overlay-register)
+		overlay_lib_register "${2}";;
+	overlay-list-mounts)
+		overlay_list_mounts "${2}";;
+	overlay-mount)
+		shift 1
+		__overlay_lib_mount_unmount "mount" "$@";;
+	get-upper-overlay-path-mappings)
+		overlay_lib_get_upper_directories "${2}";;
+	overlay-reconcile)
+		# overlay-reconcile <owned-files-list> <whiteouts-list>
+		# Each file must contain one absolute target path per line.
+		overlay_lib_reconcile "$2" "$3";;
+esac

@@ -1,0 +1,256 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_root="$this_path/../src/data/apps/available/vespera"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+
+stage_installer_runtime() {
+  local root="$1"
+
+  mkdir -p "$root/vespera/libs" "$root/vespera/conf-default" "$root/runner/bin" "$root/pkg" "$root/work" "$root/bin" "$root/data/var/vespera/info"
+  mkdir -p "$root/data/apps/available" "$root/data/apps/enabled"
+
+  cp "$source_root/libs/installer-lib" "$root/vespera/libs/installer-lib"
+  cp "$source_root/libs/source-lib" "$root/vespera/libs/source-lib"
+  chmod +x "$root/vespera/libs/installer-lib" "$root/vespera/libs/source-lib"
+
+  sed -i 's|"/data/apps/enabled/\$PACKAGE_NAME"|"$ROOT_DIR/data/apps/enabled/$PACKAGE_NAME"|' "$root/vespera/libs/installer-lib"
+
+  cat > "$root/vespera/libs/lang-lib" <<'EOF'
+#!/usr/bin/env bash
+LANG_REMOVED_PREVIOUS_INSTALL_UPGRADING_NOW=upgrade_msg
+LANG_LANGUAGE_ARG1=lang_arg
+LANG_CODE=en
+echo_lang() { :; }
+EOF
+
+  cat > "$root/vespera/libs/installer-dbus-lib" <<'EOF'
+#!/usr/bin/env bash
+installer_dbus_lib_nav_pages_sync() {
+  printf 'sync:%s|%s|%s\n' "$1" "$2" "$3" >> "$PROBE_LOG"
+}
+EOF
+
+  cat > "$root/vespera/conf-default/vespera.conf" <<EOF
+#!/usr/bin/env bash
+VESPERA_DATA_DIR="$root/data/var/vespera"
+VESPERA_VENUS_FIRMWARE_CHANGED_FILE="firmware-changed"
+VESPERA_INSTALL_STATE_FILE="install-state"
+EOF
+
+  cat > "$root/bin/vespera" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "status" ]] && [[ -n "${VESPERA_STATUS_VERSION:-}" ]]; then
+  printf 'Version: %s\n' "$VESPERA_STATUS_VERSION"
+fi
+EOF
+  chmod +x "$root/bin/vespera"
+
+  cat > "$root/pkg/demo.installer" <<'EOF'
+PACKAGE_CUSTOM_NAV_PAGES="PageA PageB"
+EOF
+
+  cat > "$root/pkg/demo.control" <<'EOF'
+Package: demo
+Version: 2.5.1
+EOF
+
+  cat > "$root/runner/bin/run-probe" <<'EOF'
+#!/usr/bin/env bash
+set -o nounset
+PATH="$ROOT_DIR/bin:$PATH"
+set -- "$ACTION" "$INSTALLER_FILE" "$WORKDIR" "$VERBOSITY"
+# shellcheck disable=SC1090
+source "$ROOT_DIR/vespera/libs/installer-lib"
+eval "$PROBE"
+EOF
+  chmod +x "$root/runner/bin/run-probe"
+}
+
+run_installer_probe() {
+  local root="$1"
+  local action="$2"
+  local probe="$3"
+  local status_version="${4:-}"
+
+  local installer_file="$root/pkg/demo.installer"
+  local workdir="$root/work"
+  local probe_log="$root/work/probe.log"
+
+  env \
+    ROOT_DIR="$root" \
+    ACTION="$action" \
+    INSTALLER_FILE="$installer_file" \
+    WORKDIR="$workdir" \
+    VERBOSITY=0 \
+    VESPERA_INSTALL_STATE_FILE="install-state" \
+    PROBE_LOG="$probe_log" \
+    PROBE="$probe" \
+    VESPERA_STATUS_VERSION="$status_version" \
+    bash "$root/runner/bin/run-probe"
+}
+
+test_installer_lib_update_install_list_records_remove_for_remove_action() {
+  local root
+  root="$(vt_make_test_root)"
+  stage_installer_runtime "$root"
+
+  local output
+  output="$(run_installer_probe "$root" remove 'installer_lib_update_install_list; cat "$WORKDIR/install-state"')"
+
+  assert_exitcode 0
+  assert_eq 'demo remove' "$output"
+
+  vt_safe_rm_rf "$root"
+}
+
+test_installer_lib_update_install_list_skips_upgrade_remove_actions() {
+  local root
+  root="$(vt_make_test_root)"
+  stage_installer_runtime "$root"
+
+  run_installer_probe "$root" upgrade-remove 'installer_lib_update_install_list'
+
+  assert_exitcode 0
+  assert_file_not_exist "$root/work/install-state"
+
+  vt_safe_rm_rf "$root"
+}
+
+test_installer_lib_update_install_list_records_enabled_for_upgrade_when_enabled_symlink_exists() {
+  local root
+  root="$(vt_make_test_root)"
+  stage_installer_runtime "$root"
+
+  local output
+  output="$(run_installer_probe "$root" upgrade-install 'ln -sfn "$ROOT_DIR/data/apps/available/demo" "$ROOT_DIR/data/apps/enabled/$PACKAGE_NAME"; installer_lib_update_install_list; cat "$WORKDIR/install-state"')"
+
+  assert_exitcode 0
+  assert_eq 'demo enabled' "$output"
+
+  vt_safe_rm_rf "$root"
+}
+
+test_installer_lib_update_install_list_records_disabled_for_upgrade_when_enabled_symlink_missing() {
+  local root
+  root="$(vt_make_test_root)"
+  stage_installer_runtime "$root"
+
+  local output
+  output="$(run_installer_probe "$root" upgrade-install 'installer_lib_update_install_list; cat "$WORKDIR/install-state"')"
+
+  assert_exitcode 0
+  assert_eq 'demo disabled' "$output"
+
+  vt_safe_rm_rf "$root"
+}
+
+test_installer_lib_update_install_list_records_enabled_for_non_upgrade_install() {
+  local root
+  root="$(vt_make_test_root)"
+  stage_installer_runtime "$root"
+
+  local output
+  output="$(run_installer_probe "$root" install 'installer_lib_update_install_list; cat "$WORKDIR/install-state"')"
+
+  assert_exitcode 0
+  assert_eq 'demo enabled' "$output"
+
+  vt_safe_rm_rf "$root"
+}
+
+test_installer_lib_get_patch_file_list_extracts_openfile_paths() {
+  local root
+  root="$(vt_make_test_root)"
+  stage_installer_runtime "$root"
+
+  cat > "$root/work/sample.patch" <<'EOF'
+# comment should be ignored
+@openfile
+====
+/tmp/a.conf
+====
+
+@remove
+====
+foo
+====
+
+@openfile
+====
+/tmp/b.conf
+====
+EOF
+
+  local output
+  output="$(run_installer_probe "$root" configure 'installer_lib_get_patch_file_list "$ROOT_DIR/work/sample.patch"')"
+
+  assert_exitcode 0
+  assert_eq $'/tmp/a.conf\n/tmp/b.conf' "$output"
+
+  vt_safe_rm_rf "$root"
+}
+
+test_installer_lib_initialize_configure_sets_install_when_not_currently_installed() {
+  local root
+  root="$(vt_make_test_root)"
+  stage_installer_runtime "$root"
+
+  local output
+  output="$(run_installer_probe "$root" configure 'installer_lib_initialize; echo "$PACKAGE_ACTION"')"
+
+  assert_exitcode 0
+  assert_eq 'install' "$output"
+
+  vt_safe_rm_rf "$root"
+}
+
+test_installer_lib_initialize_configure_sets_upgrade_install_when_installed() {
+  local root
+  root="$(vt_make_test_root)"
+  stage_installer_runtime "$root"
+
+  local output
+  output="$(run_installer_probe "$root" configure 'installer_lib_initialize; echo "$PACKAGE_ACTION"' '1.9.9')"
+
+  assert_exitcode 0
+  assert_eq 'upgrade-install' "$output"
+
+  vt_safe_rm_rf "$root"
+}
+
+test_installer_lib_initialize_upgrade_maps_to_upgrade_remove() {
+  local root
+  root="$(vt_make_test_root)"
+  stage_installer_runtime "$root"
+
+  local output
+  output="$(run_installer_probe "$root" upgrade 'installer_lib_initialize; echo "$PACKAGE_ACTION"')"
+
+  assert_exitcode 0
+  assert_eq 'upgrade-remove' "$output"
+
+  vt_safe_rm_rf "$root"
+}
+
+test_installer_lib_phase_sync_custom_nav_pages_calls_sync_helper() {
+  local root
+  root="$(vt_make_test_root)"
+  stage_installer_runtime "$root"
+
+  local probe_output="$root/work/probe.out"
+  run_installer_probe "$root" configure 'installer_lib_initialize; installer_lib_phase_sync_custom_nav_pages add; cat "$PROBE_LOG"' >"$probe_output"
+
+  assert_exitcode 0
+  assert_file_contains "$probe_output" 'sync:add|demo|PageA PageB'
+
+  vt_safe_rm_rf "$root"
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

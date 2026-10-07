@@ -4,7 +4,7 @@ Before you begin, ensure the [hardware](hardware.md) requirements are met.
 
 It is recommended to install the add-on before plugging the Inetbox device into a USB port.
 
-A prerequisite for setting up this add-on is the [Opkg Manager](../opkg-manager/setup.md).
+A prerequisite for setting up this add-on is the [Opkg Manager](../vespera/setup.md).
 
 ## Summary of Setup Steps
 

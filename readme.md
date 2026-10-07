@@ -2,7 +2,7 @@
 
 | Add-on | Summary | Overview | Hardware | Setup | Usage |
 |--------|----------|----------|----------|--------|--------|
-| Opkg Manager | Package/feed manager and USB serial device installer for Venus OS add-ons. | [Overview](docs/user/opkg-manager/overview.md) | - | [Setup](docs/user/opkg-manager/setup.md) | [Usage](docs/user/opkg-manager/usage.md) |
+| Opkg Manager | Package/feed manager and USB serial device installer for Venus OS add-ons. | [Overview](docs/user/vespera/overview.md) | - | [Setup](docs/user/vespera/setup.md) | [Usage](docs/user/vespera/usage.md) |
 | Themer | UI theme customization add-on for Venus OS. | [Overview](docs/user/themer/overview.md) | - | - | - |
 | Inetbox | Motorhome control integration for supported Inetbox hardware. | [Overview](docs/user/inetbox/overview.md) | [Hardware](docs/user/inetbox/hardware.md) | [Setup](docs/user/inetbox/setup.md) | [Usage](docs/user/inetbox/usage.md) |
 | Ne Shunt (Nordelettronica shunt) | Integration for supported Nordelettronica shunt devices. | [Overview](docs/user/ne-shunt/overview.md) | [Hardware](docs/user/ne-shunt/hardware.md) | [Setup](docs/user/ne-shunt/setup.md) | [Usage](docs/user/ne-shunt/usage.md) |

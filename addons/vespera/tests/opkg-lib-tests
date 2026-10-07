@@ -1,0 +1,286 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+output_dir="$this_path/output"
+venus_root_dir="$output_dir/__opkg-lib"
+VENUS_ROOT_DIR="$venus_root_dir"
+
+. "$this_path/../../../scripts/libs/test-lib"
+
+clear_output() {
+  mkdir -p "$output_dir"
+  rm -rf -- "$venus_root_dir"
+}
+
+stage_opkg_lib_runtime() {
+  local app_root="$VENUS_ROOT_DIR/data/apps/available/vespera"
+  local data_root="$VENUS_ROOT_DIR/data/var/vespera"
+  local source_root
+  source_root="$(cd "$this_path/../src/data/apps/available/vespera" && pwd)"
+
+  clear_output
+  mkdir -p "$app_root/libs" "$app_root/conf" "$data_root" "$VENUS_ROOT_DIR/etc/opkg"
+
+  ln -sf "$source_root/libs/source-lib" "$app_root/libs/source-lib"
+  ln -sf "$source_root/libs/log-lib" "$app_root/libs/log-lib"
+  ln -sf "$source_root/libs/opkg-lib" "$app_root/libs/opkg-lib"
+
+  cp "$source_root/conf-default/vespera.conf" "$app_root/conf/vespera.conf"
+  cp "$source_root/conf-default/opkg.conf" "$app_root/conf/opkg.conf"
+
+  printf '%s\n' 'src/gz vespera http://example.com' > "$data_root/feeds-release.conf"
+  printf '%s\n' 'src/gz develop http://develop.example.com' > "$data_root/feeds-develop.conf"
+
+  export VESPERA_ROOT="$VENUS_ROOT_DIR"
+
+  # shellcheck disable=SC1090
+  . "$app_root/libs/opkg-lib"
+
+  export VESPERA_APP_DIR="$app_root"
+  export VESPERA_DATA_DIR="$data_root"
+  export VESPERA_FEEDS_FILE="$data_root/feeds-release.conf"
+  export VESPERA_FEEDS_CONF_FILE="$app_root/conf/opkg.conf"
+  export VESPERA_COMBINED_CONF_FILE="$data_root/opkg.conf"
+  export VESPERA_FEEDS_SYMLINK="$data_root/feeds.conf"
+  export VESPERA_VERBOSITY=0
+}
+
+test_opkg_ensure_feed_symlink_creates_missing_symlink() {
+  rm -f "$VESPERA_FEEDS_SYMLINK"
+
+  opkg_ensure_feed_symlink
+
+  assert_exitcode 0
+  assert_file_exists "$VESPERA_FEEDS_SYMLINK"
+  assert_eq "$VESPERA_FEEDS_FILE" "$(readlink "$VESPERA_FEEDS_SYMLINK")"
+}
+
+test_opkg_ensure_feed_symlink_rejects_broken_symlink() {
+  local stderr=
+
+  rm -f "$VESPERA_FEEDS_SYMLINK"
+  ln -s "$VESPERA_DATA_DIR/does-not-exist.conf" "$VESPERA_FEEDS_SYMLINK"
+
+  stderr="$(opkg_ensure_feed_symlink 2>&1)"
+
+  assert_exitcode 1
+  assert_contains 'vespera: feeds symlink target file not found:' "$stderr"
+}
+
+test_opkg_ensure_combined_conf_file_creates_missing_file() {
+  rm -f "$VESPERA_COMBINED_CONF_FILE"
+
+  opkg_ensure_combined_conf_file
+
+  assert_exitcode 0
+  assert_file_exists "$VESPERA_COMBINED_CONF_FILE"
+  assert_file_contains "$VESPERA_COMBINED_CONF_FILE" "src/gz vespera http://example.com"
+}
+
+test_opkg_ensure_combined_conf_file_is_rebuilt_when_feeds_change() {
+  mkdir -p "$(dirname "$VESPERA_COMBINED_CONF_FILE")"
+  printf '%s\n' 'stale data' > "$VESPERA_COMBINED_CONF_FILE"
+  opkg_ensure_feed_symlink
+
+  touch -d "@1" "$VESPERA_COMBINED_CONF_FILE"
+  touch -d "@2" "$VESPERA_FEEDS_SYMLINK"
+  printf '%s\n' 'src/gz updated http://updated.example.com' > "$VESPERA_FEEDS_FILE"
+
+  opkg_ensure_combined_conf_file
+
+  assert_exitcode 0
+  assert_file_contains "$VESPERA_COMBINED_CONF_FILE" "src/gz updated http://updated.example.com"
+}
+
+test_opkg_lib_feed_crud_adds_feed() {
+  local stderr=
+
+  opkg_ensure_feed_symlink
+  stderr="$(opkg_lib_feed_crud add custom_feed http://custom.example.com '' 2>&1)"
+
+  assert_exitcode 0
+  assert_empty "$stderr"
+  assert_file_contains "$VESPERA_FEEDS_FILE" "src/gz custom_feed http://custom.example.com"
+}
+
+test_opkg_lib_feed_crud_edits_feed() {
+  local stderr=
+
+  opkg_ensure_feed_symlink
+  printf '%s\n' 'src/gz old_feed http://old.example.com' >> "$VESPERA_FEEDS_FILE"
+
+  stderr="$(opkg_lib_feed_crud edit new_feed http://new.example.com old_feed 2>&1)"
+
+  assert_exitcode 0
+  assert_empty "$stderr"
+  assert_file_not_contain "$VESPERA_FEEDS_FILE" "old_feed"
+  assert_file_contains "$VESPERA_FEEDS_FILE" "src/gz new_feed http://new.example.com"
+}
+
+test_opkg_lib_feed_crud_removes_feed() {
+  local stderr=
+
+  opkg_ensure_feed_symlink
+  printf '%s\n' 'src/gz retain http://keep.example.com' > "$VESPERA_FEEDS_FILE"
+  printf '%s\n' 'src/gz removable http://remove.example.com' >> "$VESPERA_FEEDS_FILE"
+
+  stderr="$(opkg_lib_feed_crud remove removable '' '' 2>&1)"
+
+  assert_exitcode 0
+  assert_empty "$stderr"
+  assert_file_not_contain "$VESPERA_FEEDS_FILE" "removable"
+  assert_file_contains "$VESPERA_FEEDS_FILE" "src/gz retain http://keep.example.com"
+}
+
+test_opkg_lib_feed_crud_rejects_remove_with_old_feed_name() {
+  local stderr
+
+  stderr="$(opkg_lib_feed_crud remove demo '' oldname 2>&1)"
+
+  assert_exitcode 1
+  assert_contains 'remove: old feed name not supported' "$stderr"
+}
+
+test_opkg_lib_feed_crud_rejects_invalid_mode() {
+  local stderr
+
+  stderr="$(opkg_lib_feed_crud badmode demo http://example.com 2>&1)"
+
+  assert_exitcode 1
+  assert_contains 'Invalid mode: badmode' "$stderr"
+}
+
+test_opkg_lib_feed_crud_rejects_invalid_feed_name() {
+  local stderr
+
+  stderr="$(opkg_lib_feed_crud add 'bad name' http://example.com '' 2>&1)"
+
+  assert_exitcode 1
+  assert_contains 'Invalid name' "$stderr"
+}
+
+test_opkg_lib_list_feeds_prints_file_and_contents() {
+  local output
+
+  output="$(opkg_lib_show_feed_contents)"
+
+  assert_exitcode 0
+  assert_contains "file: $VESPERA_FEEDS_FILE" "$output"
+  assert_contains 'src/gz vespera http://example.com' "$output"
+}
+
+test_opkg_lib_update_passes_opkg_options() {
+  local log_file="$VESPERA_DATA_DIR/opkg-update.log"
+  local stderr=
+
+  opkg() {
+    printf '%s\n' "$*" > "$log_file"
+    return 0
+  }
+
+  stderr="$(opkg_lib_update -V2 -force-removal-of-unknown 2>&1)"
+
+  assert_exitcode 0
+  assert_empty "$stderr"
+  assert_file_contains "$log_file" "-f ${VESPERA_COMBINED_CONF_FILE}"
+  assert_file_contains "$log_file" "-V2"
+  assert_file_contains "$log_file" "-force-removal-of-unknown"
+  assert_file_contains "$log_file" "update"
+}
+
+test_opkg_lib_update_adds_default_verbosity_when_missing() {
+  local log_file="$VESPERA_DATA_DIR/opkg-update-default.log"
+  local stderr=
+
+  opkg() {
+    printf '%s\n' "$*" > "$log_file"
+    return 0
+  }
+
+  stderr="$(opkg_lib_update 2>&1)"
+
+  assert_exitcode 0
+  assert_empty "$stderr"
+  assert_file_contains "$log_file" "-f ${VESPERA_COMBINED_CONF_FILE}"
+  assert_file_contains "$log_file" "-V0"
+  assert_file_contains "$log_file" "update"
+}
+
+test_opkg_lib_list_packages_filters_vespera() {
+  opkg() {
+    if [[ "$*" == "-f ${VESPERA_COMBINED_CONF_FILE} list-installed" ]]; then
+      printf '%s\n' 'vespera - 1.0' 'other-package - 2.0' 'demo-package - 3.0'
+      return 0
+    fi
+    return 0
+  }
+
+  local output
+  output="$(opkg_lib_list_packages)"
+
+  assert_exitcode 0
+  assert_eq $'other-package\ndemo-package' "$output"
+}
+
+test_opkg_lib_get_configure_order_sorts_by_install_time_and_omits_vespera() {
+  cat > "$VESPERA_DATA_DIR/status" <<'EOF'
+Package: demo-c
+Installed-Time: 300
+
+Package: vespera
+Installed-Time: 50
+
+Package: demo-a
+Installed-Time: 100
+
+Package: demo-b
+Installed-Time: 200
+
+EOF
+
+  local output
+  output="$(opkg_lib_get_configure_order)"
+
+  assert_exitcode 0
+  assert_eq $'demo-a\ndemo-b\ndemo-c' "$output"
+}
+
+test_opkg_lib_configure_packages_passes_ordered_packages() {
+  local log_file="$VESPERA_DATA_DIR/configure.log"
+
+  opkg() {
+    printf '%s\n' "$*" > "$log_file"
+  }
+
+  opkg_lib_configure_packages 'demo-a demo-b'
+
+  assert_exitcode 0
+  assert_file_contains "$log_file" "-f $VESPERA_COMBINED_CONF_FILE configure vespera demo-a demo-b"
+}
+
+test_opkg_lib_configure_packages_without_ordered_packages() {
+  local log_file="$VESPERA_DATA_DIR/configure-empty.log"
+
+  opkg() {
+    printf '%s\n' "$*" > "$log_file"
+  }
+
+  opkg_lib_configure_packages ''
+
+  assert_exitcode 0
+  assert_eq "-f $VESPERA_COMBINED_CONF_FILE configure vespera" "$(cat "$log_file")"
+}
+
+pre_test_runner() {
+  stage_opkg_lib_runtime
+}
+
+post_test_runner() {
+  true
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

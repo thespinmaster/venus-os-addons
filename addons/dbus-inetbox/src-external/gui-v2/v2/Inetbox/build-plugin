@@ -10,29 +10,22 @@ if [[ ! -f "$compiler_script" ]]; then
   exit 1
 fi
 
+OUTPUT_PATH=./output
 PLUGIN_NAME=Inetbox
+PLUGIN_FOLDER_NAME=dbus-inetbox
+
 MINIFY="--minify"
 #PRE_COMPILE="--pre-compile"
 PLUGIN_VERSION=$(cat version 2>/dev/null || echo v1.0.0);
 PLUGIN_VERSION=$(echo "${PLUGIN_VERSION%.*}.$((${PLUGIN_VERSION##*.}+1))" | tee version)
 [[ -n ${PRE_COMPILE:-} ]] && MINIFY=
 
-print_summary_line() {
-  local message="$1"
-
-  if { true >&3; } 2>/dev/null; then
-    printf '%s\n' "$message" | tee /proc/self/fd/3
-  else
-    printf '%s\n' "$message"
-  fi
-}
-
 declare DEVICE_IP_ADDRESS="${1:-}"
 # Force Qt6 tools to avoid qtchooser wrappers (/usr/bin/lupdate, /usr/bin/rcc).
 export PATH="/usr/lib/qt6/bin:/usr/lib/qt6/libexec:${PATH}"
 
 # force delete so file size reporting is not using cache (when mounting/zfs etc)
-rm -f ./output/${PLUGIN_NAME}.json
+rm -f "$OUTPUT_PATH/${PLUGIN_NAME}.json"
 
 python3 "$compiler_script" \
     --name ${PLUGIN_NAME} \
@@ -44,24 +37,37 @@ python3 "$compiler_script" \
 
 if [[ -n "${DEVICE_IP_ADDRESS}" ]]; then
   echo "--- copying plugin to device ${DEVICE_IP_ADDRESS}"
-  scp "./output/${PLUGIN_NAME}.json" "root@${DEVICE_IP_ADDRESS}:/tmp/${PLUGIN_NAME}.json"
+	# copy orgional output name (PLUGIN_NAME) to final name (PLUGIN_FOLDER_NAME)
+  scp "$OUTPUT_PATH/${PLUGIN_NAME}.json" "root@${DEVICE_IP_ADDRESS}:/tmp/${PLUGIN_FOLDER_NAME}.json"
   ssh root@"${DEVICE_IP_ADDRESS}" 'bash -s' << EOF
-mkdir -p "/data/apps/available/${PLUGIN_NAME}/gui-v2" && \
-cp "/tmp/${PLUGIN_NAME}.json" "/data/apps/available/${PLUGIN_NAME}/gui-v2/${PLUGIN_NAME}.json"
+mkdir -p "/data/apps/available/${PLUGIN_FOLDER_NAME}/gui-v2" && \
+  cp "/tmp/${PLUGIN_FOLDER_NAME}.json" "/data/apps/available/${PLUGIN_FOLDER_NAME}/gui-v2/${PLUGIN_FOLDER_NAME}.json"
 mkdir -p /data/apps/enabled && \
-ln -sf "/data/apps/available/${PLUGIN_NAME}" /data/apps/enabled
+  ln -sf "/data/apps/available/${PLUGIN_FOLDER_NAME}" /data/apps/enabled
 
 svc -t /service/flashmq
-
-rm -f /tmp/${PLUGIN_NAME}.json
+rm -f /tmp/${PLUGIN_FOLDER_NAME}.json
 EOF
 
 fi
 
-cp ./output/${PLUGIN_NAME}.json ../../../../src/data/dbus-inetbox/${PLUGIN_NAME}.json
+print_summary_line() {
+  local message="$1"
 
-declare human;human="$(du -h "./output/${PLUGIN_NAME}.json" | awk '{print $1}')"
-declare bytes;bytes="$(wc -c < "./output/${PLUGIN_NAME}.json")"
-print_summary_line "  Options: ${MINIFY:-} ${PRE_COMPILE:-}"
-print_summary_line "  Version: ${PLUGIN_VERSION}"
-print_summary_line "  Size: ${human} (${bytes})"
+  if { true >&3; } 2>/dev/null; then
+    printf '%s\n' "$message" | tee /proc/self/fd/3
+  else
+    printf '%s\n' "$message"
+  fi
+}
+
+# copy orgional output name (PLUGIN_NAME) to final name (PLUGIN_FOLDER_NAME)
+mkdir -p ../../../../src/data/apps/available/${PLUGIN_FOLDER_NAME}/gui-v2
+cp $OUTPUT_PATH/${PLUGIN_NAME}.json ../../../../src/data/apps/available/${PLUGIN_FOLDER_NAME}/gui-v2/${PLUGIN_FOLDER_NAME}.json
+
+declare bytes;bytes="$(wc -c < "$OUTPUT_PATH/${PLUGIN_NAME}.json")"
+declare human;human="$(numfmt --to=iec "$bytes")"
+print_summary_line "  $PLUGIN_NAME: compiled "
+print_summary_line "    Options: ${MINIFY:-} ${PRE_COMPILE:-}"
+print_summary_line "    Version: ${PLUGIN_VERSION}"
+print_summary_line "    Size: ${human} (${bytes})"
