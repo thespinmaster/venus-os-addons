@@ -42,10 +42,12 @@ device_remove() {
 
 device_start_all_device_services() {
 	local dbus_name="${1}"
-	local this_path;this_path="$(dirname "${BASH_SOURCE[0]}")"
+	local this_path; this_path="$(dirname "${BASH_SOURCE[0]}")"
+	echo "starting device services for '$dbus_name'"
 
-	for sid in "$this_path/list-device-bindings" "$dbus_name"; do
+	for sid in $("$this_path/../scripts/list-device-bindings" "$dbus_name"); do
 		DEVICE_SID="${sid}"
+
 		local service_name=
 
 		sdi_TTY_from_SID &&
@@ -155,7 +157,7 @@ case "${1:-}" in
 		shift
 		device_remove_all "${1}";;
 	start-all-device-services)
-		device_start_all_device_services "${1}";;
+		device_start_all_device_services "${2}";;
 	*)
 		if [[ -n ${1:-} ]]; then
 			echo "device: invalid command : ${1}" >&2

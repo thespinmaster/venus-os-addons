@@ -13,6 +13,9 @@ source "$__vespera_path/libs/opkg-lib"
 __vespera_overlay() { "${VESPERA_DATA_DIR}/info/vespera.overlay-lib" "$@"; }
 
 __start_all_services() {
+	udevadm control --reload
+	udevadm trigger --action=add --subsystem-match=tty --property-match=ID_BUS=usb >/dev/null
+
 	for app in $(opkg_lib_list_packages "all"); do
 		[[ -L "${VESPERA_ROOT:-}/data/apps/enabled/$app" ]] || continue
 		local dbus_name; dbus_name=$(cat "$VESPERA_DATA_DIR/info/${app}.${VESPERA_DBUS_NAME}" 2>/dev/null;)
@@ -61,7 +64,7 @@ __firmware_changed() {
 
 	echo "Reconciling overlays"
 	__reconcile_overlays
-	__vespera_overlay overlay-mount
+	__mount_overlays
 
 	__vespera_lib_initialize
 	: > "${VESPERA_WORKING_DIR}/${VESPERA_VENUS_FIRMWARE_CHANGED_FILE}"
@@ -82,6 +85,14 @@ __firmware_changed() {
 	"$__vespera_path/scripts/execute-startup-scripts" rcS.local
 }
 
+__mount_overlays() {
+	__vespera_overlay overlay-mount
+
+	udevadm control --reload
+	udevadm trigger --action=add --subsystem-match=tty --property-match=ID_BUS=usb >/dev/null
+	udevadm settle >/dev/null
+}
+
 declare log_file="${VESPERA_ROOT:-}/var/log/vespera/rcS-local.log"
 mkdir -p "$(dirname "$log_file")"
 exec > "$log_file" 2>&1 # note file overwrite for each reboot
@@ -93,7 +104,7 @@ fi
 
 if cmp -s "$VESPERA_VENUS_VERSION_FILE" "${VESPERA_ROOT:-}/opt/victronenergy/version"; then
 	echo "Firmware versions match; mounting"
-	__vespera_overlay overlay-mount
+	__mount_overlays
 	__start_all_services
 	"$__vespera_path/scripts/execute-startup-scripts" rcS.local
 	exit 0

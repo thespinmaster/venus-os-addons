@@ -17,18 +17,47 @@ stage_inspect_runtime() {
   TEST_APP_ROOT="$TEST_ROOT/app/vespera"
   TEST_DATA_DIR="$TEST_ROOT/data/var/vespera"
 
-  mkdir -p "$TEST_APP_ROOT/scripts" "$TEST_APP_ROOT/conf" "$TEST_DATA_DIR/info"
+  mkdir -p "$TEST_APP_ROOT/scripts" "$TEST_APP_ROOT/conf" "$TEST_APP_ROOT/libs" "$TEST_DATA_DIR/info"
 
+  cp "$source_root/libs/source-lib" "$TEST_APP_ROOT/libs/source-lib"
   cp "$source_root/scripts/inspect" "$TEST_APP_ROOT/scripts/inspect"
   chmod +x "$TEST_APP_ROOT/scripts/inspect"
 
+  cat > "$TEST_APP_ROOT/libs/serial-device-installer-lib" <<'EOF'
+#!/usr/bin/env bash
+
+sdi_TTY_from_SID() {
+  DEVICE_TTY="ttyUSB0"
+  return 0
+}
+
+sdi_get_usb_prop() {
+  local tty_path="${1:-}"
+  local prop_name="${2:-}"
+
+  [[ -n "$tty_path" ]] || return 1
+  [[ "$prop_name" == "VE_SERVICE" ]] && {
+    printf '%s\n' 'demo-service'
+    return 0
+  }
+
+  printf '%s\n' "${tty_path}:${prop_name}"
+}
+EOF
+  chmod +x "$TEST_APP_ROOT/libs/serial-device-installer-lib"
+
   cat > "$TEST_APP_ROOT/conf/vespera.conf" <<EOF
 #!/usr/bin/env bash
+VESPERA_APP_DIR="$TEST_APP_ROOT"
 VESPERA_DATA_DIR="$TEST_DATA_DIR"
 VESPERA_OVERLAYS_FILE="installer-overlays"
 VESPERA_APP_SERVICES_FILE="installer-services"
 VESPERA_APP_TEMPLATE_SERVICES_FILE="installer-template-services"
 VESPERA_DBUS_NAME="dbus-name"
+EOF
+
+  cat > "$TEST_APP_ROOT/conf/serial-starter.rules" <<'EOF'
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1234", ENV{VE_SERVICE}="demo-service"
 EOF
 
   cat > "$TEST_APP_ROOT/scripts/list-device-bindings" <<'EOF'
@@ -122,7 +151,7 @@ test_inspect_reports_services_dbus_and_overlays_for_app() {
   assert_contains 'demo - not enabled' "$output"
   assert_contains 'Services' "$output"
   assert_contains 'Dbus Services' "$output"
-  assert_contains '/Settings/Devices/sid_1234' "$output"
+  assert_contains 'Device info:1234' "$output"
   assert_contains 'Overlays' "$output"
   assert_contains '/overlay/demo mounted' "$output"
 

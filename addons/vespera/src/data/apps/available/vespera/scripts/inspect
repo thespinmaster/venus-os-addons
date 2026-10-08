@@ -4,7 +4,9 @@ __vespera_path="$(dirname "${BASH_SOURCE[0]}")"
 __vespera_path="$(cd "${__vespera_path}/.." && pwd)"
 
 # shellcheck source="../conf-default/vespera.conf"
-source "$__vespera_path/conf/vespera.conf"
+source "${VESPERA_ROOT:-}$__vespera_path/libs/source-lib"
+addsource "conf/vespera.conf"
+addsource "libs/serial-device-installer-lib"
 
 __list_overlays_for_app() {
 	"$VESPERA_DATA_DIR/info/vespera.overlay-lib" overlay-list-mounts "$VESPERA_DATA_DIR/info/$app.$VESPERA_OVERLAYS_FILE"
@@ -50,11 +52,16 @@ __get_gui_v2_addon() {
 		echo "${app} (available)"
 	fi
 }
+__print_header() {
+	printf "\033[1;97m$1\033[0m\n"
+}
 
 __print_section() {
 	[[ -n "$info" ]] || return
-	echo "${1}"
-	echo "$info" | sed 's/^/      /'
+	local tail="${1:2}"
+	extra_indent="${tail%%[! ]*}"
+	__print_header "$1"
+	echo "$info" | sed "s/^/      $extra_indent/"
 }
 
 __list_dbus_settings() {
@@ -88,18 +95,32 @@ __list_dbus_settings() {
 	for sid in $("$__vespera_path/scripts/list-device-bindings" "$dbus_name"); do
 		info="$(dbus -y "com.victronenergy.settings" "/Settings/Devices/sid_$sid" GetValue \
 			| sed 's/[{}]//g' | sed -E 's/,[[:space:]]*$//' | sort)"
-		__print_section "  - Dbus Device Settings: /Settings/Devices/sid_$sid"
+		info=
+		__print_header "  - Device info:$sid"
+		__print_section "    - Dbus Device Settings: /Settings/Devices/sid_$sid"
+		info="$(grep "$sid" "$VESPERA_APP_DIR/conf/serial-starter.rules")"
+		__print_section "    - Serial Starter Rules: "
+		# shellcheck disable=SC2034
+		DEVICE_SID=$sid
+		sdi_TTY_from_SID && {
+			info="TTY=$DEVICE_TTY"$'\n'
+			info+="VE_SERVICE=$(sdi_get_usb_prop "$DEVICE_TTY" "VE_SERVICE")"
+			__print_section "    - Usb Props"
+		}
+
 	done
 
 }
 
 declare info=
 for app in $(opkg_lib_list_packages "all"); do
-	echo "$app"
+
 	[[ "$#" -eq 0 ]] || [[ " $* " == *" $app "* ]] || continue
 	[[ -n $info ]] && echo
 	info=
-	[[ -e /data/apps/enabled/$app ]] && echo "$app - enabled" || echo "$app - not enabled"
+	[[ -e /data/apps/enabled/$app ]] \
+		&& __print_header "$app - enabled" \
+		|| __print_header "$app - not enabled"
 
 	# shellcheck disable=SC2034
 	declare -a template_service_paths=()

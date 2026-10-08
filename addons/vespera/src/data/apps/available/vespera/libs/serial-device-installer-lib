@@ -234,7 +234,7 @@ __create_serial_starter_rule() {
 	serial_starter_rule="ACTION==\"add\", ${rules}"
 
 	# make sure we don't add rules with duplicate DEVICE_SID's
-	__sdi_remove_rule
+	sdi_remove_rule
 
 	local rule_with_comment="${serial_starter_rule_comment}"$'\n'"${serial_starter_rule}"$'\n'
 	echo "${rule_with_comment}" >> "${SERIAL_STARTER_RULES_FILE}"
@@ -332,12 +332,6 @@ __sdi_refresh_udevadm() {
 
 }
 
-# public API for removing the rule that matches the current device
-# required vars: SERIAL_STARTER_RULES_FILE, either DEVICE_SID or DEVICE_TTY must be set
-sdi_remove_rule() {
-	__sdi_remove_rule "$@"
-}
-
 # convenience wrapper for callers that also want the udev refresh step
 sdi_remove_device_rule() {
 	__ensure_TTY_from_TTY_or_SID 2>/dev/null || true
@@ -348,7 +342,7 @@ sdi_remove_device_rule() {
 
 # removes a serial starter rule from the serial-starter.rules file (/etc/udev/rules.d/serial-starter.rules)
 # required vars: SERIAL_STARTER_RULES_FILE, either DEVICE_SID or DEVICE_TTY must be set
-__sdi_remove_rule() {
+sdi_remove_rule() {
 
 	[[ ! -f "${SERIAL_STARTER_RULES_FILE:-}" ]] && return 0
 
@@ -511,7 +505,7 @@ sdi_remove_service() {
 	# ignore error code (tty may not exist and we check DEVICE_TTY below)
 	__ensure_TTY_from_TTY_or_SID 2>/dev/null || true
 
-	__sdi_remove_rule || true
+	sdi_remove_rule || true
 
 	return 0
 }
