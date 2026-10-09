@@ -122,7 +122,7 @@ overlay_lib_reconcile() {
 		[[ "$_" =~ ^[[:space:]]*(#|$) ]] && continue # skip comments and whitespace
 		overlay_target="$(__overlay_lib_get_runtime_dir "$target")/${OVERLAY_UPPER_DIRNAME}"
 
-		find "$overlay_target" -depth -type d -empty |
+		find "$overlay_target" -depth -type d -empty 2>/dev/null |
 		while IFS= read -r path; do
 			rmdir "$path"
 		done
@@ -364,6 +364,9 @@ case "${1:-}" in
 	overlay-mount)
 		shift 1
 		__overlay_lib_mount_unmount "mount" "$@";;
+	overlay-mount-unmount)
+		shift 1
+		__overlay_lib_mount_unmount "$@";;
 	get-upper-overlay-path-mappings)
 		overlay_lib_get_upper_directories "${2}";;
 	overlay-reconcile)

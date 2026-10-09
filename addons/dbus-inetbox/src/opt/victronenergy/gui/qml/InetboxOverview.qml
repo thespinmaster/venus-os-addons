@@ -3,12 +3,12 @@ import com.victron.velib 1.0
 import "utils.js" as Utils
 import QtQuick.Controls
 
-OpkgCustomOverviewPage {
+VesperaCustomOverviewPage {
 	id: root
 
-	//required by OpkgCustomOverviewPage
+	//required by VesperaCustomOverviewPage
 	source: "InetboxOverview.qml"
-	
+
   property int headerFont: 20
 	property int groupFont: 12
   property int textFont: 12

@@ -44,5 +44,5 @@ PACKAGE_DBUS_SETTINGS='
 	{"path":"/Settings/Vespera/ShowCompact", "default":0, "min":0, "max":1}
 	{"path":"/Settings/Vespera/NoAction", "default":0, "min":0, "max":1}
 	{"path":"/Settings/Vespera/CustomNavPages", "default":"", "min":0, "max":0}
-	{"path":"/Settings/Vespera/ShowDetailedOutput", "default": 0, "min":0, "max":0}
+	{"path":"/Settings/Vespera/Version", "default": 1, "min":0, "max":0}
 '

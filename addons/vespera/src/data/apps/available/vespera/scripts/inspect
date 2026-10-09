@@ -95,7 +95,6 @@ __list_dbus_settings() {
 	for sid in $("$__vespera_path/scripts/list-device-bindings" "$dbus_name"); do
 		info="$(dbus -y "com.victronenergy.settings" "/Settings/Devices/sid_$sid" GetValue \
 			| sed 's/[{}]//g' | sed -E 's/,[[:space:]]*$//' | sort)"
-		info=
 		__print_header "  - Device info:$sid"
 		__print_section "    - Dbus Device Settings: /Settings/Devices/sid_$sid"
 		info="$(grep "$sid" "$VESPERA_APP_DIR/conf/serial-starter.rules")"

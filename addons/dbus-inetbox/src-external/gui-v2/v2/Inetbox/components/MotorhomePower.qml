@@ -10,6 +10,7 @@ Rectangle {
 	implicitHeight: powerRow.implicitHeight + powerRow.anchors.margins * 2
 
 	property bool animationEnabled
+	property bool allSourcesVisible: dcInputLoads.visible && dcInGaugeQuantity.visible && acInGaugeQuantity.visible
 
 	RowLayout {
 		id: powerRow
@@ -24,6 +25,7 @@ Rectangle {
 				id: solarYield
 				visible: Global.solarInputs.inputCount > 0
 				alignment: Qt.AlignLeft | Qt.AlignTop
+				fontScaleFactor: root.allSourcesVisible ? 0.8 : 1.0
 				icon.source: "qrc:/images/solaryield.svg"
 				quantityLabel.sourceType: VenusOS.ElectricalQuantity_Source_Any
 				quantityLabel.dataObject: Global.system.solar
@@ -33,6 +35,7 @@ Rectangle {
 				id: dcInGaugeQuantity
 				visible: Global.dcInputs.model.count > 0
 				alignment: Qt.AlignLeft | Qt.AlignBottom
+				fontScaleFactor: root.allSourcesVisible ? 0.8 : 1.0
 				icon.source: Global.dcInputs.model.count === 1 ? VenusOS.dcMeter_iconForType(Global.dcInputs.model.firstMeterType) : VenusOS.dcMeter_iconForMultipleTypes()
 				quantityLabel.sourceType: VenusOS.ElectricalQuantity_Source_Dc
 				quantityLabel.dataObject: Global.dcInputs
@@ -43,6 +46,7 @@ Rectangle {
 				visible: Global.acInputs.findValidSource() !== VenusOS.AcInputs_InputSource_NotAvailable
 				//visible: true
 				alignment: Qt.AlignLeft | Qt.AlignVCenter
+				fontScaleFactor: root.allSourcesVisible ? 0.8 : 1.0
 				icon.source: Global.acInputs.sourceIcon(Global.acInputs.highlightedInput?.source ?? Global.acInputs.findValidSource())
 				quantityLabel.sourceType: VenusOS.ElectricalQuantity_Source_AcInputOnly
 				quantityLabel.dataObject: Global.acInputs.highlightedInput
@@ -54,10 +58,10 @@ Rectangle {
 			MotorhomeBattery {
 				id: batteryWidget
 				animationEnabled: root.animationEnabled
-				size: VenusOS.OverviewWidget_Size_XS
+				size: VenusOS.OverviewWidget_Size_L
 				topPadding: 0
 				Layout.fillWidth: true
-				Layout.preferredWidth: 0
+				//Layout.preferredWidth: 0
 			}
 		}
 
@@ -70,6 +74,7 @@ Rectangle {
 				id: acLoadGauge
 				visible: Global.system.hasAcLoads
 				alignment: Qt.AlignRight | Qt.AlignVCenter
+				fontScaleFactor: root.allSourcesVisible ? 0.8 : 1.0
 				icon.source: "qrc:/images/acloads.svg"
 				quantityLabel.sourceType: VenusOS.ElectricalQuantity_Source_Ac
 				quantityLabel.dataObject: Global.system.load.ac
@@ -79,6 +84,7 @@ Rectangle {
 				id: dcLoadGauge
 				visible: Global.system.dc.hasPower
 				alignment: Qt.AlignRight | Qt.AlignVCenter
+				fontScaleFactor: root.allSourcesVisible ? 0.8 : 1.0
 				icon.source: "qrc:/images/dcloads.svg"
 				quantityLabel.sourceType: VenusOS.ElectricalQuantity_Source_Dc
 				quantityLabel.dataObject: Global.system.dc

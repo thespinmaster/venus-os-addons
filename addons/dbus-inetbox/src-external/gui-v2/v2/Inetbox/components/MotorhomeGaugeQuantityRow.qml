@@ -8,6 +8,7 @@ Row {
 	property int alignment: Qt.AlignTop | Qt.AlignLeft
 	property alias icon: icon
 	property alias quantityLabel: quantityLabel
+	property real fontScaleFactor: 1.0
 
 	spacing: Theme.geometry_briefPage_edgeGauge_quantityLabel_spacing
 	layoutDirection: root.alignment & Qt.AlignRight ? Qt.RightToLeft : Qt.LeftToRight
@@ -22,6 +23,6 @@ Row {
 	ElectricalQuantityLabel {
 		id: quantityLabel
 		anchors.verticalCenter: parent.verticalCenter
-		font.pixelSize: Theme.font_briefPage_quantityLabel_size
+		font.pixelSize: Theme.font_briefPage_quantityLabel_size * root.fontScaleFactor
 	}
 }

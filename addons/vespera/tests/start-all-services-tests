@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+
+set -o nounset
+
+this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_root="$this_path/../src/data/apps/available/vespera"
+
+. "$this_path/../../../scripts/libs/test-lib"
+. "$this_path/lib/vespera-test-fixtures"
+
+TEST_ROOT=
+TEST_APP_ROOT=
+TEST_DATA_DIR=
+
+stage_start_all_services_runtime() {
+  TEST_ROOT="$(vt_make_test_root)"
+  TEST_APP_ROOT="$TEST_ROOT/data/apps/available/vespera"
+  TEST_DATA_DIR="$TEST_ROOT/data/var/vespera"
+
+  mkdir -p "$TEST_APP_ROOT/scripts" "$TEST_APP_ROOT/conf" "$TEST_APP_ROOT/libs" "$TEST_DATA_DIR/info" "$TEST_ROOT/bin"
+  mkdir -p "$TEST_ROOT/data/apps/enabled" "$TEST_ROOT/service"
+
+  cp "$source_root/conf-default/vespera.conf" "$TEST_APP_ROOT/conf/vespera.conf"
+  cp "$source_root/scripts/start-all-services" "$TEST_APP_ROOT/scripts/start-all-services"
+  chmod +x "$TEST_APP_ROOT/scripts/start-all-services"
+
+  cat > "$TEST_APP_ROOT/conf/vespera.conf" <<EOF
+#!/usr/bin/env bash
+VESPERA_DATA_DIR="/data/var/vespera"
+VESPERA_DBUS_NAME="dbus-name"
+EOF
+
+  cat > "$TEST_APP_ROOT/libs/opkg-lib" <<'EOF'
+#!/usr/bin/env bash
+opkg_lib_list_packages() {
+  printf '%s\n' demo
+  printf '%s\n' missing-dbus
+}
+EOF
+
+  cat > "$TEST_APP_ROOT/scripts/start-app-services" <<'EOF'
+#!/usr/bin/env bash
+printf 'start-services:%s\n' "$*" >> "$TEST_LOG"
+EOF
+  chmod +x "$TEST_APP_ROOT/scripts/start-app-services"
+
+  cat > "$TEST_ROOT/bin/svstat" <<'EOF'
+#!/usr/bin/env bash
+count_file="$VESPERA_ROOT/svstat-count"
+count=0
+[[ -f "$count_file" ]] && count="$(cat "$count_file")"
+count=$((count + 1))
+printf '%s\n' "$count" > "$count_file"
+
+if [[ "${1:-}" == "/service/localsettings" && $count -lt 3 ]]; then
+  printf '%s\n' '/service/localsettings: down'
+  exit 1
+fi
+
+printf '%s\n' '/service/localsettings: run (pid 123) 2s'
+EOF
+  chmod +x "$TEST_ROOT/bin/svstat"
+
+  cat > "$TEST_DATA_DIR/info/demo.dbus-name" <<'EOF'
+com.example.demo
+EOF
+
+  ln -s "$TEST_ROOT/data/apps/available/demo" "$TEST_ROOT/data/apps/enabled/demo"
+  ln -s "$TEST_ROOT/data/apps/available/missing-dbus" "$TEST_ROOT/data/apps/enabled/missing-dbus"
+
+  : > "$TEST_ROOT/start-all-services.log"
+}
+
+cleanup_start_all_services_runtime() {
+  [[ -n "${TEST_ROOT:-}" ]] && vt_safe_rm_rf "$TEST_ROOT"
+}
+
+test_start_all_services_waits_for_localsettings_and_starts_enabled_apps() {
+  stage_start_all_services_runtime
+
+  local output
+  output="$(TEST_LOG="$TEST_ROOT/start-all-services.log" VESPERA_ROOT="$TEST_ROOT" PATH="$TEST_ROOT/bin:$PATH" bash "$TEST_APP_ROOT/scripts/start-all-services" 2>&1)"
+
+  assert_exitcode 0
+  assert_contains 'waiting for /service/localsettings to be up' "$output"
+  assert_file_contains "$TEST_ROOT/start-all-services.log" 'start-services:demo com.example.demo'
+  assert_file_not_contain "$TEST_ROOT/start-all-services.log" 'start-services:missing-dbus'
+  [[ "$(cat "$TEST_ROOT/svstat-count")" -ge 3 ]]
+  assert_result "$?" "start-all-services retried until localsettings was up"
+
+  cleanup_start_all_services_runtime
+}
+
+if [[ "${0:-}" == "${BASH_SOURCE[0]}" ]]; then
+  test_runner_all --summary ""
+fi

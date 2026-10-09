@@ -110,10 +110,12 @@ Rectangle {
 				alignment: Qt.AlignBottom
 				Layout.alignment: Qt.AlignBottom
 				Layout.bottomMargin: 5 // HACK QuantityLabel does not expose baseline
+				Layout.rightMargin: -10
 				value: targetTemperatureSlider.pressed ? targetTemperatureSlider.value : root.model.targetTemperature ?? NaN
 				visible: root.model.heatingOn | root.model.airconOn
 				unit: Global.systemSettings.temperatureUnit
 				unitColor: Theme.color_overviewPage_widget_battery_font_secondary
+				Layout.minimumWidth: 50
 			}
 
 			MinimalSlider {

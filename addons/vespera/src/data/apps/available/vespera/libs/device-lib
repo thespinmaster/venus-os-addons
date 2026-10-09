@@ -42,12 +42,11 @@ device_remove() {
 
 device_start_all_device_services() {
 	local dbus_name="${1}"
-	local this_path; this_path="$(dirname "${BASH_SOURCE[0]}")"
-	echo "starting device services for '$dbus_name'"
+	local this_path; this_path="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 
 	for sid in $("$this_path/../scripts/list-device-bindings" "$dbus_name"); do
 		DEVICE_SID="${sid}"
-
+		echo "Starting device: $DEVICE_SID ($dbus_name)"
 		local service_name=
 
 		sdi_TTY_from_SID &&
@@ -131,13 +130,8 @@ device_bind() {
 
 	[[ -n $demo_mode ]] && {
 		#echo "vespera: Venus OS in demo mode, manualy starting service"
-		(
-				local this_path; this_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-				# shellcheck disable=SC1091
-				. "$this_path/serial-device-installer-lib"
-				service_lib_start_templated_service "${tty}" "${service_name}"
-				rm -f "/dev/serial-starter/${tty}"
-		)
+		service_lib_start_templated_service "${tty}" "${service_name}"
+		rm -f "/dev/serial-starter/${tty}"
 
 	}
 

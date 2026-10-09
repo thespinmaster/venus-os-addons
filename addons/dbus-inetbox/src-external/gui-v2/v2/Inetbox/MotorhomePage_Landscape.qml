@@ -27,9 +27,9 @@ Page {
 		}
 		IC.MotorhomeTankLevels {
 			model: root.gaugeModel
-			Layout.fillWidth: true
+			Layout.fillWidth: false
 			Layout.fillHeight: true
-			Layout.preferredWidth: 0.8
+      Layout.preferredWidth: mainRow.width * 0.42
 		}
 		IC.MotorhomePower {
 			Layout.fillWidth: true
@@ -42,20 +42,16 @@ Page {
 		DateSelectorDialog {}
 	}
 
-	//  width: 225
-	//  rotation: 250.5
-  //  topMargin: root.inetboxOffsetY + 198
-
 	IC.ScheduleButton {
 		id: scheduleButton
 		icon.source: "qrc:/images/icon_manualstart_timer_24.svg"
 		mainColor: '#387dc5'
-		visible: inetboxModel.device
+		visible: root.inetboxModel.device
 		anchors {
 			right: bg_image2.right
 			rightMargin: 200
 			top: bg_image2.top
-			topMargin: 50
+			topMargin: 40
 		}
 
 		onClicked: Global.dialogLayer.open(dateSelectorDialog)
@@ -83,10 +79,11 @@ Page {
 			}
 		}
 	}
+
 	ColumnLayout {
 		anchors {
 			left: parent.left; leftMargin: 40
-			top: mainRow.bottom; topMargin: 10
+			top: mainRow.bottom; topMargin: 5
 			right: bg_image.right
 			bottom: bg_image.bottom; bottomMargin:40
 		}
@@ -126,8 +123,8 @@ Page {
 		anchors {
 			left: parent.left
 			leftMargin: 20
-			top: mainRow.bottom
-			topMargin: -35
+			top: mainRow.top
+			topMargin: 100
 		}
 	}
 
@@ -143,8 +140,8 @@ Page {
 		anchors {
 			right: parent.right
 			leftMargin: 20
-			top: mainRow.bottom
-			topMargin: 50
+			top: mainRow.top
+			topMargin: 185
 		}
 	}
 }

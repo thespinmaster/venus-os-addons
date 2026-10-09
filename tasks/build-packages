@@ -306,7 +306,7 @@ develop_source_byref() {
   # `--mkpath` creates the destination path if it does not already exist.
   # `--delete` keeps the cached staging dir in sync with the source tree.
   echo "  rsync staging: ${src_path} -> ${dest_path}"
-  /usr/bin/time -f "  rsync elapsed: %E (user=%U sys=%S cpu=%P)" rsync -a --delete --mkpath "$src_path/" "$dest_path" "${options[@]}" || return 1
+	rsync -a --delete --mkpath "$src_path/" "$dest_path" "${options[@]}" || return 1
   _develop_path="$dest_path"
 
   return 0

@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+__vespera_path="$(dirname "${BASH_SOURCE[0]}")"
+__vespera_path="$(cd "${__vespera_path}/.." && pwd)"
+
+# shellcheck source="../conf-default/vespera.conf"
+source "$__vespera_path/conf/vespera.conf"
+VESPERA_DATA_DIR="${VESPERA_ROOT:-}${VESPERA_DATA_DIR}"
+# shellcheck source="../libs/opkg-lib"
+source "$__vespera_path/libs/opkg-lib"
+
+declare -i settings_up=0 counter=0
+echo "start-all-services: waiting for com.victronenergy.settings"
+while true; do
+	if [[ $settings_up == 0 ]]; then
+		svstat "/service/localsettings" 2>/dev/null | grep -Eq 'run|up ' \
+				&& { settings_up=1; continue; }
+	elif dbus -y com.victronenergy.settings /Settings/Vespera/Version GetValue 1>/dev/null 2>&1; then
+		settings_up=2
+		break
+	fi
+
+	counter=$((counter+1))
+	((counter>200)) && break
+	sleep 1
+done
+((settings_up!=2)) && { echo "start-all-services: localsettings service not available"; exit 1; }
+
+for app in $(opkg_lib_list_packages "all"); do
+	echo "starting services for $app"
+	[[ -L "${VESPERA_ROOT:-}/data/apps/enabled/$app" ]] || { echo "cannot start services for $app; not enabled"; continue; }
+	dbus_name="$(cat "$VESPERA_DATA_DIR/info/${app}.${VESPERA_DBUS_NAME}" 2>/dev/null)"
+	[[ -z "$dbus_name" ]] && { echo "cannot start services for $app; $dbus_name is empty."; continue; }
+	echo "calling '$__vespera_path/scripts/start-app-services $app $dbus_name'"
+	"$__vespera_path/scripts/start-app-services" "$app" "$dbus_name"
+done

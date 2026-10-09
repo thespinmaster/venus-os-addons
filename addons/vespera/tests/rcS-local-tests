@@ -82,6 +82,13 @@ printf 'start-services:%s\n' "$*" >> "$TEST_LOG"
 EOF
   chmod +x "$TEST_APP_ROOT/scripts/start-app-services"
 
+  cat > "$TEST_APP_ROOT/scripts/start-all-services" <<'EOF'
+#!/usr/bin/env bash
+printf 'start-all-services\n' >> "$TEST_LOG"
+"$(dirname "${BASH_SOURCE[0]}")/start-app-services" demo com.example.demo
+EOF
+  chmod +x "$TEST_APP_ROOT/scripts/start-all-services"
+
   cat > "$TEST_APP_ROOT/scripts/execute-startup-scripts" <<'EOF'
 #!/usr/bin/env bash
 printf 'execute-startup:%s\n' "$*" >> "$TEST_LOG"
@@ -105,6 +112,22 @@ cleanup_rcs_runtime() {
   [[ -n "${TEST_ROOT:-}" ]] && vt_safe_rm_rf "$TEST_ROOT"
 }
 
+wait_for_log_match() {
+  local file="${1:-}"
+  local pattern="${2:-}"
+  local tries=30
+
+  while (( tries > 0 )); do
+    if [[ -f "$file" ]] && grep -Eq "$pattern" "$file"; then
+      return 0
+    fi
+    sleep 0.1
+    ((tries--))
+  done
+
+  return 1
+}
+
 test_rcs_local_copies_version_when_missing_and_exits() {
   stage_rcs_runtime
 
@@ -125,6 +148,8 @@ test_rcs_local_mounts_overlays_and_starts_services_when_versions_match() {
 
   assert_exitcode 0 "rcS-local exits successfully when firmware versions match"
   assert_file_contains "$TEST_ROOT/rcs.log" 'overlay:overlay-mount' "matching firmware mounts overlays"
+  wait_for_log_match "$TEST_ROOT/rcs.log" 'start-services:demo com.example.demo'
+  assert_result "$?" "matching firmware eventually starts enabled app services"
   assert_file_contains "$TEST_ROOT/rcs.log" 'start-services:demo com.example.demo' "matching firmware starts enabled app services"
   assert_file_contains "$TEST_ROOT/rcs.log" 'execute-startup:rcS.local' "matching firmware runs rcS.local startup hooks"
 
@@ -146,9 +171,46 @@ test_rcs_local_firmware_changed_reconciles_and_reconfigures() {
   assert_file_contains "$TEST_ROOT/rcs.log" 'overlay:overlay-mount' "firmware-changed mounts overlays after reconcile"
   assert_file_contains "$TEST_ROOT/rcs.log" 'ensure-combined-conf' "firmware-changed rebuilds opkg combined conf"
   assert_file_contains "$TEST_ROOT/rcs.log" 'configure:demo' "firmware-changed configures ordered packages"
+  wait_for_log_match "$TEST_ROOT/rcs.log" 'start-services:demo com.example.demo'
+  assert_result "$?" "firmware-changed eventually restarts enabled app services"
   assert_file_contains "$TEST_ROOT/rcs.log" 'start-services:demo com.example.demo' "firmware-changed restarts enabled app services"
   assert_file_contains "$TEST_ROOT/rcs.log" 'execute-startup:rcS.local' "firmware-changed runs startup scripts"
   assert_file_exists "$TEST_DATA_DIR/firmware-changed" "firmware-changed marker file is created"
+
+  cleanup_rcs_runtime
+}
+
+test_rcs_local_starts_all_services_in_background() {
+  stage_rcs_runtime
+
+  cat > "$TEST_APP_ROOT/scripts/start-all-services" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$$" > "$VESPERA_ROOT/start-all-services.pid"
+printf 'start-all-services:blocking\n' >> "$TEST_LOG"
+sleep 30
+EOF
+  chmod +x "$TEST_APP_ROOT/scripts/start-all-services"
+
+  cp "$TEST_ROOT/opt/victronenergy/version" "$TEST_DATA_DIR/venus-version"
+
+  timeout 5 env TEST_LOG="$TEST_ROOT/rcs.log" VESPERA_ROOT="$TEST_ROOT" bash "$TEST_APP_ROOT/scripts/rcS-local"
+
+  assert_exitcode 0 "rcS-local exits even when start-all-services is blocked"
+  wait_for_log_match "$TEST_ROOT/rcs.log" 'start-all-services:blocking'
+  assert_result "$?" "rcS-local launched start-all-services"
+  assert_file_contains "$TEST_ROOT/rcs.log" 'start-all-services:blocking' "rcS-local launched start-all-services"
+  assert_file_contains "$TEST_ROOT/rcs.log" 'execute-startup:rcS.local' "rcS-local continues after launching start-all-services"
+
+  if [[ -f "$TEST_ROOT/start-all-services.pid" ]]; then
+    local bg_pid
+    bg_pid="$(cat "$TEST_ROOT/start-all-services.pid")"
+    kill "$bg_pid" 2>/dev/null || true
+    for _ in $(seq 1 20); do
+      kill -0 "$bg_pid" 2>/dev/null || break
+      sleep 0.1
+    done
+    kill -9 "$bg_pid" 2>/dev/null || true
+  fi
 
   cleanup_rcs_runtime
 }

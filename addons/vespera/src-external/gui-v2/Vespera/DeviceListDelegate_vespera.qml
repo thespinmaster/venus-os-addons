@@ -4,6 +4,7 @@ import "qrc:/Vespera/components/VesperaSingleton.js" as VesperaSingleton
 
 DeviceListDelegate {
 	id: root
+	height: 0
 
 	onDeviceChanged: {
 		var isReload = VesperaSingleton.getIsReload()

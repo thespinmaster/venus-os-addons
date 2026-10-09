@@ -12,7 +12,8 @@ VESPERA_FEEDS_SYMLINK="${VESPERA_DATA_DIR}/feeds.conf"
 
 # Expand rootfs/ make it v
 opkg_lib_expand_root_fs() {
-	local is_ro;is_ro=$(grep -qE " / .* ro[ ,]" /proc/mounts)
+	grep -qE " / .* ro[ ,]" /proc/mounts
+	local is_ro=$?
 	/opt/victronenergy/swupdate-scripts/resize2fs.sh
 	[[ $is_ro == 0 ]] && mount -o remount,ro /
 }
@@ -254,11 +255,7 @@ opkg_lib_update() {
 		local has_verbosity=0
 
 		for arg in "${args[@]}"; do
-			case "$arg" in
-				-V[0-9])
-					has_verbosity=1
-					break
-					;;
+			case "$arg" in -V[0-9]) has_verbosity=1; break;;
 			esac
 		done
 

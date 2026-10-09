@@ -250,7 +250,7 @@ OverviewWidget {
 				function quantityLabelWidth(valueText, unitText) {
 					const valueTextRect = quantityLabelFont.tightBoundingRect(valueText)
 					return valueTextRect.x + valueTextRect.width
-						+ Theme.geometry_quantityLabel_spacing
+						//+ Theme.geometry_quantityLabel_spacing
 						+ quantityLabelFont.advanceWidth(unitText)
 				}
 

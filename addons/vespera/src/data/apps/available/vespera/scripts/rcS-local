@@ -13,14 +13,10 @@ source "$__vespera_path/libs/opkg-lib"
 __vespera_overlay() { "${VESPERA_DATA_DIR}/info/vespera.overlay-lib" "$@"; }
 
 __start_all_services() {
-	udevadm control --reload
-	udevadm trigger --action=add --subsystem-match=tty --property-match=ID_BUS=usb >/dev/null
-
-	for app in $(opkg_lib_list_packages "all"); do
-		[[ -L "${VESPERA_ROOT:-}/data/apps/enabled/$app" ]] || continue
-		local dbus_name; dbus_name=$(cat "$VESPERA_DATA_DIR/info/${app}.${VESPERA_DBUS_NAME}" 2>/dev/null;)
-		"$__vespera_path/scripts/start-app-services" "$app" "$dbus_name"
-	done
+	# launch in background
+	# start-all-services waits for localsettings service to
+	# start before starting services
+	"$__vespera_path/scripts/start-all-services" &
 }
 
 __reconcile_overlays() {
@@ -52,7 +48,10 @@ __reconcile_overlays() {
 
 __firmware_changed() {
 
+	echo "*********************************************"
 	echo "Firmware changed, configuring packages"
+  echo "$(date '+%Y-%m-%d %H:%M:%S')"
+	echo "$(date -Iseconds)" # (ISO 8601 with timezone: e.g., "2026-10-08T14:30:15+01:00")
 
 	# shellcheck source=../libs/vespera-lib
 	source "$__vespera_path/libs/vespera-lib"
@@ -88,9 +87,12 @@ __firmware_changed() {
 __mount_overlays() {
 	__vespera_overlay overlay-mount
 
-	udevadm control --reload
-	udevadm trigger --action=add --subsystem-match=tty --property-match=ID_BUS=usb >/dev/null
-	udevadm settle >/dev/null
+	if [[ -d "$VESPERA_DATA_DIR/overlays/_etc_udev_rules.d/merged" ]]; then
+		# overlay for udev rules exists then reload udev rules
+		udevadm control --reload
+		udevadm trigger --action=add --subsystem-match=tty --property-match=ID_BUS=usb >/dev/null
+		udevadm settle >/dev/null
+	fi
 }
 
 declare log_file="${VESPERA_ROOT:-}/var/log/vespera/rcS-local.log"
@@ -98,8 +100,8 @@ mkdir -p "$(dirname "$log_file")"
 exec > "$log_file" 2>&1 # note file overwrite for each reboot
 
 if [[ ! -f "$VESPERA_VENUS_VERSION_FILE" ]]; then
+	# no version file exists copy
 	cp "${VESPERA_ROOT:-}/opt/victronenergy/version" "$VESPERA_VENUS_VERSION_FILE"
-	exit 0
 fi
 
 if cmp -s "$VESPERA_VENUS_VERSION_FILE" "${VESPERA_ROOT:-}/opt/victronenergy/version"; then

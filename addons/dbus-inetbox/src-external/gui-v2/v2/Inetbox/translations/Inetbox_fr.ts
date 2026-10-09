@@ -121,25 +121,25 @@
     </message>
     <message id="inetbox_energy_water">
         <location filename="../InetboxDevicePage.qml" line="44"/>
-        <location filename="../components/MotorhomeInetbox.qml" line="151"/>
+        <location filename="../components/MotorhomeInetbox.qml" line="153"/>
         <source>Water</source>
         <translation>Eau</translation>
     </message>
     <message id="inetbox_energy_heating">
         <location filename="../InetboxDevicePage.qml" line="51"/>
-        <location filename="../components/MotorhomeInetbox.qml" line="171"/>
+        <location filename="../components/MotorhomeInetbox.qml" line="173"/>
         <source>Heating</source>
         <translation>Chauffage</translation>
     </message>
     <message id="inetbox_energy_aircon">
         <location filename="../InetboxDevicePage.qml" line="57"/>
-        <location filename="../components/MotorhomeInetbox.qml" line="185"/>
+        <location filename="../components/MotorhomeInetbox.qml" line="187"/>
         <source>Aircon</source>
         <translation>Climatisation</translation>
     </message>
     <message id="inetbox_energy_fan_speed">
         <location filename="../InetboxDevicePage.qml" line="65"/>
-        <location filename="../components/MotorhomeInetbox.qml" line="218"/>
+        <location filename="../components/MotorhomeInetbox.qml" line="220"/>
         <source>Fan speed</source>
         <translation>Vitesse du ventilateur</translation>
     </message>
@@ -185,7 +185,7 @@
         <translation>Code d’erreur : %1</translation>
     </message>
     <message id="inetbox_energy_mix">
-        <location filename="../components/MotorhomeInetbox.qml" line="229"/>
+        <location filename="../components/MotorhomeInetbox.qml" line="231"/>
         <source>Energy Mix</source>
         <translation>Mix énergétique</translation>
     </message>
